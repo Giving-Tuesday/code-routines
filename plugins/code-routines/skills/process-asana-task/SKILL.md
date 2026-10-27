@@ -3,6 +3,7 @@ name: process-asana-task
 description: Process an Asana task from specified Asana board
 argument-hint: <project-gid> <slack-user-id> <slack-channel-id>
 ---
+
 Arguments, in order: project GID = $0, Slack user ID = $1, Slack channel ID = $2.
 If any argument is missing, stop and NOTIFY.
 
@@ -26,17 +27,17 @@ BASE: release-<major>.x, where <major> is the first number of the Release versio
 
 5. Load pstack:poteto-mode with the Skill tool (args: task description, Type,
    repo, BASE, Mode). If that fails, NOTIFY-BLOCKED.
-a. Run the playbook in THIS session. If you delegate, use only the
+   a. Run the playbook in THIS session. If you delegate, use only the
    implementer, verifier, or reviewer agents, and only for work a playbook
    phase assigns. Never use general-purpose for task work.
    b. Before writing any code, open the playbook for this Type and create one
-      TaskCreate entry per phase and per principle skill it names.
+   TaskCreate entry per phase and per principle skill it names.
    c. You are unattended. At any checkpoint that would ask the user, decide,
-      record the decision for the result comment, and continue. Never skip
-      the phase.
+   record the decision for the result comment, and continue. Never skip
+   the phase.
    d. Step 5 is done only when every task from (b) is completed. Before step 6,
-      list each phase with its evidence (Skill call or task ID). If any phase
-      has no evidence, go back and do it.
+   list each phase with its evidence (Skill call or task ID). If any phase
+   has no evidence, go back and do it.
 
 6. Write a result comment. Post it on the Asana task and NOTIFY.
 
