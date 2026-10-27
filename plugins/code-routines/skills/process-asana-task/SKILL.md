@@ -1,7 +1,6 @@
 ---
 name: process-asana-task
 description: Process an Asana task from specified Asana board
-disable-model-invocation: true
 argument-hint: <project-gid> <slack-user-id> <slack-channel-id>
 ---
 Arguments, in order: project GID = $0, Slack user ID = $1, Slack channel ID = $2.
