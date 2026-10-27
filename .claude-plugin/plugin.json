@@ -1,0 +1,8 @@
+{
+  "name": "code-routines",
+  "description": "A plugin for routines and scheduled tasks in Claude",
+  "version": "1.0.0",
+  "author": {
+    "name": "Giving Tuesday"
+  }
+}
