@@ -1,0 +1,16 @@
+{
+  "name": "code-routines",
+  "owner": {
+    "name": "GivingTuesday",
+    "url": "https://github.com/Giving-Tuesday"
+  },
+  "description": "A plugin for routines and scheduled tasks in Claude.",
+  "plugins": [
+    {
+      "name": "code-routines",
+      "source": "./plugins/code-routines",
+      "description": "Routines for Claude Code.",
+      "version": "1.0.0"
+    }
+  ]
+}
