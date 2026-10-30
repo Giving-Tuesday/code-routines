@@ -25,15 +25,15 @@ NOTIFY-BLOCKED: NOTIFY with the reasons, mark the task [blocked], and move it to
 
 4. Run `node <this skill's directory>/routine.mjs run` in the background with a timeout of at least two hours, and wait for it. It starts the work session. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
 
-5. Run `node <this skill's directory>/routine.mjs gate`. Then spawn the `code-routines:playbook-auditor` agent with the gate's `transcript` and `result` paths and the playbook name from `.audit/routine.json`. The task passes only when the gate exits 0 and the auditor returns PASS.
+5. Run `node <this skill's directory>/routine.mjs gate`. Then spawn the `code-routines:playbook-auditor` agent with the gate's `transcript` and `result` paths and the playbook name from `.audit/routine.json`. The gate's `violations` are hard-rule breaks. Its `findings` and the auditor's verdict are a report only.
 
-6. Post a comment on the Asana task with `.audit/result.md`, the gate's `problems`, and the auditor's table.
+6. Post a comment on the Asana task with `.audit/result.md`, a "Process audit" section with the gate's `findings` and the auditor's verdict and table, and any `violations`.
 
-7. On pass, move the task to "Needs review" and NOTIFY with the PR link. On fail, NOTIFY-BLOCKED with the gate's `problems` and the auditor's failed rows.
+7. If `violations` is empty, move the task to "Needs review" and NOTIFY with the PR link and the audit verdict. Otherwise NOTIFY-BLOCKED with the `violations`.
 
 8. End with a summary in this session's output: the outcome and the PR link.
 
 Rules:
 
-- Never merge, and never move a task to "Needs review" without a passing gate and auditor.
+- Never merge, and never move a task to "Needs review" while the gate reports `violations`.
 - Never edit CI config or secrets.
