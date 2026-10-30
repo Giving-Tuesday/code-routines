@@ -10,7 +10,7 @@
       "name": "code-routines",
       "source": "./plugins/code-routines",
       "description": "Routines for Claude Code.",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }
