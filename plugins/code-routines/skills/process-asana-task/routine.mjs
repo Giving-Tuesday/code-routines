@@ -240,18 +240,39 @@ Routine facts and hard rules. These come from the routine, not the ticket.
 - Never merge unless Mode is merge and ${s.base} is a release branch. Never target main. Never edit CI config or secrets. Never bypass git hooks.
 - You are unattended under a full-autonomy grant. Nobody will answer a question.
 - Before your final reply, write .audit/result.md. It opens with a "## Playbook compliance" table with one row per ${s.playbook} playbook step: \`| <n> | <step> | done or skip: <reason> | <evidence> |\`. The rest is your final reply.
-- After you exit, a script audits your transcript, todolist, commits and PR against the playbook. A missing step blocks the ticket.`;
+- After you exit, a script audits your transcript, todolist, commits and PR against the playbook. Any gap it finds comes back to you once to close.`;
+}
+
+export function buildRepairPrompt(s, audit) {
+  return `/pstack:poteto-mode The routine's process audit found gaps in your ${s.playbook} run for ${s.url}. Close them on branch ${s.branch} and its PR. If the PR does not exist yet, open it as your first prompt said.
+
+${audit}
+
+- For each gap, run the skipped step or skill now on the work you already did. Rerun nothing the audit did not flag.
+- A prose skill (technical-writing, unslop) applies to the PR title and body: update them with \`gh api -X PATCH repos/${s.slug}/pulls/<number>\`.
+- Never rewrite pushed history: no rebase, amend or force-push. A gap that needs a history rewrite stays open. Name it in the table.
+- Update .audit/result.md so each row says done or skip: <reason> with evidence from this round.
+- The routine facts and hard rules from your first prompt still hold.`;
+}
+
+function claude(cwd, state, sessionArgs, prompt) {
+  const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS.join(","), "--output-format", "json"], {
+    cwd, encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
+  });
+  writeFileSync(join(cwd, ".audit/claude.json"), result.stdout ?? "");
+  return { ok: result.status === 0, sessionId: state.sessionId, transcript: transcriptPath(state.sessionId), problems: result.status === 0 ? [] : [`claude exited ${result.status}: ${(result.stderr ?? "").slice(-500)}`] };
 }
 
 function run(cwd) {
   const state = loadState(cwd);
   state.sessionId = randomUUID();
   saveState(cwd, state);
-  const result = spawnSync("claude", ["-p", buildPrompt(state), "--session-id", state.sessionId, "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS.join(","), "--output-format", "json"], {
-    cwd, encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
-  });
-  writeFileSync(join(cwd, ".audit/claude.json"), result.stdout ?? "");
-  return { ok: result.status === 0, sessionId: state.sessionId, transcript: transcriptPath(state.sessionId), problems: result.status === 0 ? [] : [`claude exited ${result.status}: ${(result.stderr ?? "").slice(-500)}`] };
+  return claude(cwd, state, ["--session-id", state.sessionId], buildPrompt(state));
+}
+
+function repair(auditPath, cwd) {
+  const state = loadState(cwd);
+  return claude(cwd, state, ["--resume", state.sessionId], buildRepairPrompt(state, readFileSync(auditPath, "utf8")));
 }
 
 function transcriptPath(sessionId) {
@@ -277,9 +298,9 @@ function gate(cwd) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const [command, arg] = process.argv.slice(2);
   const cwd = process.cwd();
-  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), gate: () => gate(cwd) };
+  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd) };
   if (!commands[command]) {
-    console.error("usage: routine.mjs prepare <ticket.json> | run | gate");
+    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate");
     process.exit(2);
   }
   const out = commands[command]();
