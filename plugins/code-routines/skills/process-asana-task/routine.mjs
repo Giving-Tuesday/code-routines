@@ -14,6 +14,7 @@ const BASE_TOOLS = [
   "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
   "Bash(git:*)", "Bash(node:*)", "Bash(gh api:*)",
   "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(mkdir:*)",
+  "Bash(echo:*)", "Bash(printf:*)", "Bash(cd:*)", "Bash(pwd)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(diff:*)", "Bash(test:*)",
 ];
 const STOP_HOOK_LIMIT = 3;
 
@@ -241,7 +242,7 @@ function prepare(ticketPath, cwd) {
 
 export function buildPrompt(s) {
   const pr = PLAYBOOKS[s.playbook].opensPr
-    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -f body=...\`. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.`
+    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -F body=@.audit/pr-body.md\`, with the body written to that file first. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.`
     : "This is read-only. Make no edits, no commits and no PR.";
   return `/pstack:poteto-mode ${s.name}
 
@@ -311,7 +312,7 @@ export function summarizeDenials(outputs) {
       counts.set(what, (counts.get(what) ?? 0) + 1);
     }
   }
-  return [...counts].map(([what, n]) => `the routine refused \`${what}\` ${n} time${n === 1 ? "" : "s"}; add its tool to TOOLCHAINS in routine.mjs if the repo needs it`);
+  return [...counts].map(([what, n]) => `the routine refused \`${what.length > 120 ? `${what.slice(0, 117)}...` : what}\` ${n} time${n === 1 ? "" : "s"}`);
 }
 
 const STOP_COUNT = ".audit/stop-hook.count";

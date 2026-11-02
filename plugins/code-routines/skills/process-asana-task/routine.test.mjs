@@ -110,7 +110,7 @@ test("the seeded todo.md satisfies the todolist check once ticked or skipped", (
 
 test("permission refusals are counted per command", () => {
   const out = JSON.stringify({ permission_denials: [{ tool_name: "Bash", tool_input: { command: "uv run pytest" } }, { tool_name: "Bash", tool_input: { command: "uv run pytest" } }] });
-  assert.deepEqual(summarizeDenials([out, ""]), ["the routine refused `uv run pytest` 2 times; add its tool to TOOLCHAINS in routine.mjs if the repo needs it"]);
+  assert.deepEqual(summarizeDenials([out, ""]), ["the routine refused `uv run pytest` 2 times"]);
 });
 
 test("the Stop hook blocks while gaps remain, up to its limit", () => {
