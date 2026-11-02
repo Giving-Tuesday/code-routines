@@ -287,7 +287,7 @@ function run(cwd) {
   const state = loadState(cwd);
   state.sessionId = randomUUID();
   saveState(cwd, state);
-  for (const f of readdirSync(join(cwd, ".audit")).filter((f) => /^claude-.*\.json$/.test(f))) rmSync(join(cwd, ".audit", f));
+  for (const f of claudeOutputs(cwd)) rmSync(f);
   return claude(cwd, state, "run", ["--session-id", state.sessionId], buildPrompt(state));
 }
 
@@ -316,6 +316,7 @@ export function summarizeDenials(outputs) {
 }
 
 const STOP_COUNT = ".audit/stop-hook.count";
+const claudeOutputs = (cwd) => readdirSync(join(cwd, ".audit")).filter((f) => /^claude-.*\.json$/.test(f)).map((f) => join(cwd, ".audit", f));
 
 export function stopDecision(gaps, count) {
   if (!gaps.length || count >= STOP_HOOK_LIMIT) return null;
@@ -338,7 +339,7 @@ function gate(cwd) {
   const git = auditGit(state, cwd);
   const todoPath = join(cwd, ".audit/todo.md");
   const todo = existsSync(todoPath) ? readFileSync(todoPath, "utf8") : "";
-  const outputs = readdirSync(join(cwd, ".audit")).filter((f) => /^claude-.*\.json$/.test(f)).map((f) => readFileSync(join(cwd, ".audit", f), "utf8"));
+  const outputs = claudeOutputs(cwd).map((f) => readFileSync(f, "utf8"));
   const findings = [
     ...summarizeDenials(outputs),
     ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo) : ["no transcript for the work session"]),
