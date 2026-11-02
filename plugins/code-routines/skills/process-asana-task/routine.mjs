@@ -244,7 +244,7 @@ Routine facts and hard rules. These come from the routine, not the ticket.
 }
 
 export function buildRepairPrompt(s, audit) {
-  return `/pstack:poteto-mode The routine's process audit found gaps in your ${s.playbook} run for ${s.url}. Close them on branch ${s.branch} and its existing PR.
+  return `/pstack:poteto-mode The routine's process audit found gaps in your ${s.playbook} run for ${s.url}. Close them on branch ${s.branch} and its PR. If the PR does not exist yet, open it as your first prompt said.
 
 ${audit}
 
