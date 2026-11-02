@@ -27,6 +27,8 @@ NOTIFY-BLOCKED: NOTIFY with the reasons, mark the task [blocked], and move it to
 
 5. Run `node <this skill's directory>/routine.mjs gate`. Then spawn the `code-routines:playbook-auditor` agent with the gate's `transcript` and `result` paths and the playbook name from `.audit/routine.json`. The gate's `violations` are hard-rule breaks. Its `findings` and the auditor's verdict are a report only.
 
+   If the gate reports any `violations` or `findings`, or the auditor returns FAIL, write them to `.audit/audit.md`: the gate's `violations` and `findings`, then the auditor's missing and invalid-skip rows. Run `node <this skill's directory>/routine.mjs repair .audit/audit.md` in the background with a timeout of at least one hour, and wait for it. It resumes the work session once to close the gaps. Whatever its exit code, run the gate and the auditor again, and use only this second result from here on. Do one repair round, never more.
+
 6. Post a comment on the Asana task with `.audit/result.md`, a "Process audit" section with the gate's `findings` and the auditor's verdict and table, and any `violations`.
 
 7. If `violations` is empty, move the task to "Needs review" and NOTIFY with the PR link and the audit verdict. Otherwise NOTIFY-BLOCKED with the `violations`.

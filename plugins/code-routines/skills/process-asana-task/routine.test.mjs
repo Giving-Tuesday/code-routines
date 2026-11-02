@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { auditResult, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { auditResult, buildRepairPrompt, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -82,4 +82,12 @@ test("changelog Unreleased section and repo slug parse", () => {
   assert.equal(unreleasedSection("## [Unreleased]\n- Only\n").trim(), "- Only");
   assert.equal(repoSlug("http://local_proxy@127.0.0.1:1234/git/Giving-Tuesday/embed-app"), "Giving-Tuesday/embed-app");
   assert.equal(repoSlug("git@github.com:Giving-Tuesday/embed-app.git"), "Giving-Tuesday/embed-app");
+});
+
+test("repair prompt resumes poteto-mode with the audit and forbids history rewrites", () => {
+  const prompt = buildRepairPrompt({ playbook: "bug-fix", url: "https://app.asana.com/0/0/1", branch: "claude/x", slug: "o/r" }, "- skill unslop never ran");
+  assert.match(prompt, /^\/pstack:poteto-mode /);
+  assert.ok(prompt.includes("- skill unslop never ran"));
+  assert.ok(prompt.includes("repos/o/r/pulls/<number>"));
+  assert.match(prompt, /Never rewrite pushed history/);
 });
