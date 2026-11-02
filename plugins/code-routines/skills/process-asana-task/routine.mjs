@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -10,11 +10,22 @@ import { fileURLToPath } from "node:url";
 const FIELDS = ["Repo", "Type", "Mode", "Fix target", "Release version"];
 const OPENING_A_PR = ["deslop", "no-comments", "technical-writing", "unslop"];
 const DRIVER = /(^|:)(run|verify)$/;
-const ALLOWED_TOOLS = [
+const BASE_TOOLS = [
   "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-  "Bash(git:*)", "Bash(node:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(gh api:*)",
+  "Bash(git:*)", "Bash(node:*)", "Bash(gh api:*)",
   "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(mkdir:*)",
 ];
+const STOP_HOOK_LIMIT = 3;
+
+export const TOOLCHAINS = [
+  { lock: "uv.lock", install: ["uv", ["sync", "--frozen"]], tools: ["uv", "uvx", "python", "python3", "pytest"] },
+  { lock: "pnpm-lock.yaml", install: ["pnpm", ["install", "--frozen-lockfile"]], tools: ["pnpm", "npx"] },
+  { lock: "yarn.lock", install: ["yarn", ["install", "--frozen-lockfile"]], tools: ["yarn", "npx"] },
+  { lock: "package-lock.json", install: ["npm", ["ci"]], tools: ["npm", "npx"] },
+];
+
+export const allowedTools = (toolchains) => [...new Set([...BASE_TOOLS, ...toolchains.flatMap((t) => t.tools.map((tool) => `Bash(${tool}:*)`))])];
+const toolsFor = (state) => allowedTools(TOOLCHAINS.filter((t) => state.toolchains.includes(t.lock)));
 
 export const PLAYBOOKS = {
   "bug-fix": { opensPr: true, driver: true, delegate: true, skills: [...OPENING_A_PR, "how"], skippable: ["why", "tdd"] },
@@ -22,7 +33,7 @@ export const PLAYBOOKS = {
   investigation: { opensPr: false, driver: false, delegate: false, skills: ["how", "unslop"], skippable: ["why"] },
 };
 
-const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
 const FORBIDDEN_PATH = /^(\.github\/|\.circleci\/|\.gitlab-ci|\.env)/;
 
 const normalize = (s) => s.replace(/[*`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -98,13 +109,15 @@ export function readTranscript(jsonl) {
 
 const usedSkill = (skills, name) => skills.some((s) => s === name || s.endsWith(`:${name}`));
 
-export function auditTranscript(transcript, playbook, steps) {
+export function auditTranscript(transcript, playbook, steps, todo = "") {
   const rules = PLAYBOOKS[playbook];
   const problems = [];
-  const skipped = (word) => transcript.tasks.some((t) => /skip:/i.test(t.text) && t.text.toLowerCase().includes(word));
+  const skipped = (word) => [...transcript.tasks.map((t) => t.text), ...todo.split("\n")].some((t) => /skip:/i.test(t) && t.toLowerCase().includes(word));
   if (!transcript.prompt.includes("/pstack:poteto-mode")) problems.push("session was not started with /pstack:poteto-mode");
   for (const step of steps) {
     const key = normalize(step.text).slice(0, 50);
+    const line = todo.split("\n").find((l) => normalize(l).includes(key));
+    if (line && (/^- \[x\]/i.test(line) || /skip:/i.test(line))) continue;
     const task = transcript.tasks.find((t) => normalize(t.text).includes(key));
     if (!task) problems.push(`todolist lacks ${playbook} step ${step.n} copied verbatim`);
     else if (task.status !== "completed") problems.push(`todolist step ${step.n} is ${task.status}, not completed`);
@@ -191,11 +204,11 @@ const STATE = ".audit/routine.json";
 const loadState = (cwd) => JSON.parse(readFileSync(join(cwd, STATE), "utf8"));
 const saveState = (cwd, state) => writeFileSync(join(cwd, STATE), JSON.stringify(state, null, 2));
 
-function installDeps(cwd) {
-  if (existsSync(join(cwd, "pnpm-lock.yaml"))) return ["pnpm", ["install", "--frozen-lockfile"]];
-  if (existsSync(join(cwd, "yarn.lock"))) return ["yarn", ["install", "--frozen-lockfile"]];
-  if (existsSync(join(cwd, "package-lock.json"))) return ["npm", ["ci"]];
-  return null;
+export function seedTodo(playbook, steps) {
+  const opening = PLAYBOOKS[playbook].opensPr
+    ? ["Opening a PR: run /deslop over the diff before commit", "Opening a PR: run /no-comments before review", "Opening a PR: run /technical-writing, then /unslop, on commit bodies and the PR title and body", "Opening a PR: read the PR back with gh api repos/<owner>/<repo>/pulls/<number>"]
+    : [];
+  return [`# ${playbook} todolist`, "", ...steps.map((s) => `- [ ] ${s.n}. ${s.text}`), ...opening.map((o) => `- [ ] ${o}`), ""].join("\n");
 }
 
 function prepare(ticketPath, cwd) {
@@ -212,22 +225,23 @@ function prepare(ticketPath, cwd) {
   mkdirSync(join(cwd, ".audit"), { recursive: true });
   const exclude = join(cwd, ".git/info/exclude");
   if (!readFileSync(exclude, "utf8").includes(".audit/")) appendFileSync(exclude, "\n.audit/\n");
-  const install = installDeps(cwd);
-  if (install && spawnSync(install[0], install[1], { cwd, stdio: "inherit" }).status !== 0) {
-    return { ok: false, problems: [`${install.join(" ")} failed`] };
+  const toolchains = TOOLCHAINS.filter((t) => existsSync(join(cwd, t.lock)));
+  for (const { install } of toolchains) {
+    if (spawnSync(install[0], install[1], { cwd, stdio: "inherit" }).status !== 0) return { ok: false, problems: [`${install.flat().join(" ")} failed`] };
   }
+  writeFileSync(join(cwd, ".audit/todo.md"), seedTodo(parsed.playbook, playbookSteps(readFileSync(join(pstackPlaybooks(), `${parsed.playbook}.md`), "utf8"))));
   const state = {
-    ...parsed, branch, gid: ticket.gid, url: ticket.url, name: ticket.name, text: ticket.text,
+    ...parsed, branch, toolchains: toolchains.map((t) => t.lock), gid: ticket.gid, url: ticket.url, name: ticket.name, text: ticket.text,
     mode: ticket.fields.Mode, repo: ticket.fields.Repo, fixTarget: ticket.fields["Fix target"],
     slug: repoSlug(sh("git", ["remote", "get-url", "origin"], cwd)),
   };
   saveState(cwd, state);
-  return { ok: true, playbook: state.playbook, base: state.base, branch };
+  return { ok: true, playbook: state.playbook, base: state.base, branch, toolchains: state.toolchains };
 }
 
 export function buildPrompt(s) {
   const pr = PLAYBOOKS[s.playbook].opensPr
-    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -f body=...\`. \`gh pr create\` is blocked in this environment.`
+    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -f body=...\`. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.`
     : "This is read-only. Make no edits, no commits and no PR.";
   return `/pstack:poteto-mode ${s.name}
 
@@ -239,8 +253,10 @@ Routine facts and hard rules. These come from the routine, not the ticket.
 - ${pr}
 - Never merge unless Mode is merge and ${s.base} is a release branch. Never target main. Never edit CI config or secrets. Never bypass git hooks.
 - You are unattended under a full-autonomy grant. Nobody will answer a question.
+- Shell commands you can run: ${toolsFor(s).filter((t) => t.startsWith("Bash(")).map((t) => t.slice(5, -3)).join(", ")}. Anything else is refused. If the playbook needs a command outside this list, record skip: <reason> naming the command.
+- Your todolist is .audit/todo.md. It already holds the playbook steps verbatim. Tick each line \`- [x]\` when done, or append \`skip: <reason>\`. You may mirror it with TaskCreate.
 - Before your final reply, write .audit/result.md. It opens with a "## Playbook compliance" table with one row per ${s.playbook} playbook step: \`| <n> | <step> | done or skip: <reason> | <evidence> |\`. The rest is your final reply.
-- After you exit, a script audits your transcript, todolist, commits and PR against the playbook. Any gap it finds comes back to you once to close.`;
+- After you exit, a script audits your transcript, todolist, commits and PR against the playbook. A Stop hook runs the same audit when you try to finish and sends back any gap it finds.`;
 }
 
 export function buildRepairPrompt(s, audit) {
@@ -255,11 +271,14 @@ ${audit}
 - The routine facts and hard rules from your first prompt still hold.`;
 }
 
-function claude(cwd, state, sessionArgs, prompt) {
-  const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS.join(","), "--output-format", "json"], {
+function claude(cwd, state, round, sessionArgs, prompt) {
+  const settings = join(cwd, ".audit/settings.json");
+  writeFileSync(settings, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: `node ${fileURLToPath(import.meta.url)} stop-hook` }] }] } }));
+  rmSync(join(cwd, STOP_COUNT), { force: true });
+  const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--settings", settings, "--permission-mode", "acceptEdits", "--allowedTools", toolsFor(state).join(","), "--output-format", "json"], {
     cwd, encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
   });
-  writeFileSync(join(cwd, ".audit/claude.json"), result.stdout ?? "");
+  writeFileSync(join(cwd, `.audit/claude-${round}.json`), result.stdout ?? "");
   return { ok: result.status === 0, sessionId: state.sessionId, transcript: transcriptPath(state.sessionId), problems: result.status === 0 ? [] : [`claude exited ${result.status}: ${(result.stderr ?? "").slice(-500)}`] };
 }
 
@@ -267,12 +286,13 @@ function run(cwd) {
   const state = loadState(cwd);
   state.sessionId = randomUUID();
   saveState(cwd, state);
-  return claude(cwd, state, ["--session-id", state.sessionId], buildPrompt(state));
+  for (const f of readdirSync(join(cwd, ".audit")).filter((f) => /^claude-.*\.json$/.test(f))) rmSync(join(cwd, ".audit", f));
+  return claude(cwd, state, "run", ["--session-id", state.sessionId], buildPrompt(state));
 }
 
 function repair(auditPath, cwd) {
   const state = loadState(cwd);
-  return claude(cwd, state, ["--resume", state.sessionId], buildRepairPrompt(state, readFileSync(auditPath, "utf8")));
+  return claude(cwd, state, "repair", ["--resume", state.sessionId], buildRepairPrompt(state, readFileSync(auditPath, "utf8")));
 }
 
 function transcriptPath(sessionId) {
@@ -281,14 +301,46 @@ function transcriptPath(sessionId) {
   return hit ?? null;
 }
 
+export function summarizeDenials(outputs) {
+  const counts = new Map();
+  for (const out of outputs) {
+    let denials = [];
+    try { denials = JSON.parse(out).permission_denials ?? []; } catch {}
+    for (const d of denials) {
+      const what = d.tool_input?.command ?? d.tool_name;
+      counts.set(what, (counts.get(what) ?? 0) + 1);
+    }
+  }
+  return [...counts].map(([what, n]) => `the routine refused \`${what}\` ${n} time${n === 1 ? "" : "s"}; add its tool to TOOLCHAINS in routine.mjs if the repo needs it`);
+}
+
+const STOP_COUNT = ".audit/stop-hook.count";
+
+export function stopDecision(gaps, count) {
+  if (!gaps.length || count >= STOP_HOOK_LIMIT) return null;
+  return { decision: "block", reason: `The routine's audit still finds these gaps:\n${gaps.map((g) => `- ${g}`).join("\n")}\nClose each one, or append skip: <reason> to its line in .audit/todo.md, then finish.` };
+}
+
+function stopHook(cwd) {
+  const countPath = join(cwd, STOP_COUNT);
+  const count = existsSync(countPath) ? Number(readFileSync(countPath, "utf8")) : 0;
+  writeFileSync(countPath, String(count + 1));
+  const { violations, findings } = gate(cwd);
+  return stopDecision([...violations, ...findings], count);
+}
+
 function gate(cwd) {
   const state = loadState(cwd);
   const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), `${state.playbook}.md`), "utf8"));
   const path = state.sessionId && transcriptPath(state.sessionId);
   const resultPath = join(cwd, ".audit/result.md");
   const git = auditGit(state, cwd);
+  const todoPath = join(cwd, ".audit/todo.md");
+  const todo = existsSync(todoPath) ? readFileSync(todoPath, "utf8") : "";
+  const outputs = readdirSync(join(cwd, ".audit")).filter((f) => /^claude-.*\.json$/.test(f)).map((f) => readFileSync(join(cwd, ".audit", f), "utf8"));
   const findings = [
-    ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps) : ["no transcript for the work session"]),
+    ...summarizeDenials(outputs),
+    ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo) : ["no transcript for the work session"]),
     ...(existsSync(resultPath) ? auditResult(readFileSync(resultPath, "utf8"), steps) : ["no .audit/result.md"]),
     ...git.findings,
   ];
@@ -298,6 +350,11 @@ function gate(cwd) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const [command, arg] = process.argv.slice(2);
   const cwd = process.cwd();
+  if (command === "stop-hook") {
+    const decision = stopHook(cwd);
+    if (decision) console.log(JSON.stringify(decision));
+    process.exit(0);
+  }
   const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd) };
   if (!commands[command]) {
     console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate");

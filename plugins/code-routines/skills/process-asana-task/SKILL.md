@@ -23,7 +23,7 @@ NOTIFY-BLOCKED: NOTIFY with the reasons, mark the task [blocked], and move it to
 
 3. From that checkout, run `node <this skill's directory>/routine.mjs prepare .audit/ticket.json`. It validates the fields, computes BASE, resets the branch to origin/BASE and installs dependencies. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
 
-4. Run `node <this skill's directory>/routine.mjs run` in the background with a timeout of at least two hours, and wait for it. It starts the work session. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
+4. Run `node <this skill's directory>/routine.mjs run` in the background with a timeout of at least two hours, and wait for it. It starts the work session with only the shell tools of the repo's lockfiles allowed, a seeded `.audit/todo.md`, and a Stop hook that sends the gate's gaps back to the session up to three times before it may finish. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
 
 5. Run `node <this skill's directory>/routine.mjs gate`. Then spawn the `code-routines:playbook-auditor` agent with the gate's `transcript` and `result` paths and the playbook name from `.audit/routine.json`. The gate's `violations` are hard-rule breaks. Its `findings` and the auditor's verdict are a report only.
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { auditResult, buildRepairPrompt, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -90,4 +90,32 @@ test("repair prompt resumes poteto-mode with the audit and forbids history rewri
   assert.ok(prompt.includes("- skill unslop never ran"));
   assert.ok(prompt.includes("repos/o/r/pulls/<number>"));
   assert.match(prompt, /Never rewrite pushed history/);
+});
+
+test("a uv repo gets uv and pytest; a Node-only repo does not", () => {
+  const uv = allowedTools(TOOLCHAINS.filter((t) => t.lock === "uv.lock"));
+  assert.ok(uv.includes("Bash(uv:*)") && uv.includes("Bash(pytest:*)"));
+  assert.ok(!allowedTools(TOOLCHAINS.filter((t) => t.lock === "package-lock.json")).includes("Bash(uv:*)"));
+});
+
+test("the seeded todo.md satisfies the todolist check once ticked or skipped", () => {
+  const todo = seedTodo("bug-fix", steps);
+  assert.match(todo, /Opening a PR: run \/deslop/);
+  const noTasks = readTranscript([prompt, ...call("Skill", { skill: "how" })].join("\n"));
+  assert.ok(auditTranscript(noTasks, "bug-fix", steps, todo).some((p) => p.includes("step 1")));
+  const ticked = todo.replace(/- \[ \] 1\./, "- [x] 1.").replace(/(- \[ \] 2\..*)/, "$1 skip: one file");
+  const problems = auditTranscript(noTasks, "bug-fix", steps, ticked);
+  assert.ok(!problems.some((p) => /step (1|2)\b/.test(p)), problems.join("\n"));
+});
+
+test("permission refusals are counted per command", () => {
+  const out = JSON.stringify({ permission_denials: [{ tool_name: "Bash", tool_input: { command: "uv run pytest" } }, { tool_name: "Bash", tool_input: { command: "uv run pytest" } }] });
+  assert.deepEqual(summarizeDenials([out, ""]), ["the routine refused `uv run pytest` 2 times; add its tool to TOOLCHAINS in routine.mjs if the repo needs it"]);
+});
+
+test("the Stop hook blocks while gaps remain, up to its limit", () => {
+  assert.equal(stopDecision([], 0), null);
+  assert.match(stopDecision(["skill unslop never ran"], 0).reason, /- skill unslop never ran/);
+  assert.equal(stopDecision(["skill unslop never ran"], 0).decision, "block");
+  assert.equal(stopDecision(["skill unslop never ran"], 3), null);
 });
