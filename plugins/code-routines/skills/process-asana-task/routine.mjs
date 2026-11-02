@@ -137,38 +137,39 @@ export function unreleasedSection(changelog) {
 function auditGit(state, cwd) {
   const { base, branch, playbook } = state;
   const rules = PLAYBOOKS[playbook];
-  const problems = [];
+  const violations = [];
+  const findings = [];
   const commits = sh("git", ["rev-list", "--reverse", `origin/${base}..HEAD`], cwd).split("\n").filter(Boolean);
   const files = (rev) => sh("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", rev], cwd).split("\n").filter(Boolean);
   if (!rules.opensPr) {
-    if (commits.length) problems.push(`${playbook} must not commit, found ${commits.length} commits`);
-    return { problems, pr: null };
+    if (commits.length) violations.push(`${playbook} must not commit, found ${commits.length} commits`);
+    return { violations, findings, pr: null };
   }
-  if (!commits.length) return { problems: [`no commits on ${branch} beyond origin/${base}`], pr: null };
+  if (!commits.length) return { violations: [`no commits on ${branch} beyond origin/${base}`], findings, pr: null };
   const touched = sh("git", ["diff", "--name-only", `origin/${base}...HEAD`], cwd).split("\n").filter(Boolean);
-  for (const f of touched.filter((f) => FORBIDDEN_PATH.test(f))) problems.push(`touches CI config or secrets: ${f}`);
+  for (const f of touched.filter((f) => FORBIDDEN_PATH.test(f))) violations.push(`touches CI config or secrets: ${f}`);
   if (playbook === "bug-fix") {
     const first = files(commits[0]);
-    if (!first.length || !first.every((f) => TEST_PATH.test(f))) problems.push("first commit is not a test-only repro commit");
-    if (!commits.slice(1).some((c) => files(c).some((f) => !TEST_PATH.test(f)))) problems.push("no fix commit after the repro commit");
+    if (!first.length || !first.every((f) => TEST_PATH.test(f))) findings.push("first commit is not a test-only repro commit");
+    if (!commits.slice(1).some((c) => files(c).some((f) => !TEST_PATH.test(f)))) findings.push("no fix commit after the repro commit");
   }
   if (existsSync(join(cwd, "CHANGELOG.md"))) {
     const before = unreleasedSection(trySh("git", ["show", `origin/${base}:CHANGELOG.md`], cwd) ?? "");
     const added = unreleasedSection(readFileSync(join(cwd, "CHANGELOG.md"), "utf8"))
       .split("\n").filter((l) => /^\s*[-*] /.test(l) && !before.includes(l));
-    if (!added.length) problems.push("CHANGELOG.md [Unreleased] has no new bullet");
+    if (!added.length) findings.push("CHANGELOG.md [Unreleased] has no new bullet");
   }
   if (trySh("git", ["ls-remote", "origin", `refs/heads/${branch}`], cwd)?.split("\t")[0] !== sh("git", ["rev-parse", "HEAD"], cwd)) {
-    problems.push(`origin/${branch} does not match HEAD`);
+    findings.push(`origin/${branch} does not match HEAD`);
   }
   const pulls = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=all&head=${state.slug.split("/")[0]}:${branch}`], cwd) ?? "[]");
   const pr = pulls[0];
-  if (!pr) problems.push(`no PR for ${branch}`);
+  if (!pr) violations.push(`no PR for ${branch}`);
   else {
-    if (pr.base.ref !== base) problems.push(`PR base is ${pr.base.ref}, expected ${base}`);
-    if (pr.merged_at && !/^merge$/i.test(state.mode)) problems.push("PR was merged though Mode is not merge");
+    if (pr.base.ref !== base) violations.push(`PR base is ${pr.base.ref}, expected ${base}`);
+    if (pr.merged_at && !/^merge$/i.test(state.mode)) violations.push("PR was merged though Mode is not merge");
   }
-  return { problems, pr: pr?.html_url ?? null };
+  return { violations, findings, pr: pr?.html_url ?? null };
 }
 
 export function repoSlug(remoteUrl) {
@@ -265,12 +266,12 @@ function gate(cwd) {
   const path = state.sessionId && transcriptPath(state.sessionId);
   const resultPath = join(cwd, ".audit/result.md");
   const git = auditGit(state, cwd);
-  const problems = [
+  const findings = [
     ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps) : ["no transcript for the work session"]),
     ...(existsSync(resultPath) ? auditResult(readFileSync(resultPath, "utf8"), steps) : ["no .audit/result.md"]),
-    ...git.problems,
+    ...git.findings,
   ];
-  return { ok: problems.length === 0, pr: git.pr, transcript: path, result: resultPath, problems };
+  return { ok: git.violations.length === 0, pr: git.pr, transcript: path, result: resultPath, violations: git.violations, findings };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
