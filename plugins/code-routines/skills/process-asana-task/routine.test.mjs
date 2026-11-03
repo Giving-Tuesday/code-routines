@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -158,4 +158,23 @@ test("order findings never block a merge, but outcome findings do", () => {
   const ctx = { cwd: dir, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks({ ...ctx, findings: ["skill how never ran", "todolist step 3 is pending, not completed"] }), []);
   assert.deepEqual(failedMergeChecks({ ...ctx, findings: [NO_DRIVER, NOT_DELEGATED] }), ["the change was checked on its real surface", "the code was written by a delegate"]);
+});
+
+test("the PreToolUse hook enforces delegation and skill order", () => {
+  const t = (...skills) => readTranscript([prompt, ...skills.flatMap((skill) => call("Skill", { skill }))].join("\n"));
+  const edit = (path, agent_id) => ({ tool_name: "Edit", tool_input: { file_path: `/w/${path}` }, agent_id });
+  const bash = (command, agent_id) => ({ tool_name: "Bash", tool_input: { command }, agent_id });
+  assert.match(preToolDecision(edit("src/tooltip.ts"), t(), "bug-fix", "/w"), /Delegate this edit/);
+  assert.equal(preToolDecision(edit("src/tooltip.ts", "a1"), t(), "bug-fix", "/w"), null);
+  assert.equal(preToolDecision(edit("tests/test_tooltip.py"), t(), "bug-fix", "/w"), null);
+  assert.equal(preToolDecision(edit("CHANGELOG.md"), t(), "bug-fix", "/w"), null);
+  assert.match(preToolDecision(bash("git commit -m x", "a1"), t(), "feature", "/w"), /how, architect/);
+  assert.equal(preToolDecision(bash("git commit -m x", "a1"), t("how", "architect"), "feature", "/w"), null);
+  assert.match(preToolDecision(bash("git add -A && git commit -m x"), t("how"), "bug-fix", "/w"), /technical-writing, unslop, deslop/);
+  assert.equal(preToolDecision(bash("git commit -m x"), t("how", "pstack:deslop", "technical-writing", "unslop"), "bug-fix", "/w"), null);
+  const editAfterDeslop = readTranscript([prompt, ...["how", "deslop", "technical-writing", "unslop"].flatMap((skill) => call("Skill", { skill })), ...call("Edit", { file_path: "/w/tests/a.py" })].join("\n"));
+  assert.match(preToolDecision(bash("git commit -m x"), editAfterDeslop, "bug-fix", "/w"), /deslop \(after your last edit\)/);
+  assert.match(preToolDecision(bash("gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x"), t("technical-writing", "unslop"), "bug-fix", "/w"), /no-comments/);
+  assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), t(), "bug-fix", "/w"), null);
+  assert.equal(preToolDecision(edit("src/a.ts"), t(), "investigation", "/w"), null);
 });

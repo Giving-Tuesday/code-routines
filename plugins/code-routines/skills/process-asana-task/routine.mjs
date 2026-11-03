@@ -31,9 +31,9 @@ export const allowedTools = (toolchains) => [...new Set([...BASE_TOOLS, ...toolc
 const toolsFor = (state) => allowedTools(TOOLCHAINS.filter((t) => state.toolchains.includes(t.lock)));
 
 export const PLAYBOOKS = {
-  "bug-fix": { opensPr: true, driver: true, delegate: true, skills: [...OPENING_A_PR, "how"], skippable: ["why", "tdd"] },
-  feature: { opensPr: true, driver: true, delegate: true, skills: [...OPENING_A_PR, "how", "architect"], skippable: ["interrogate"] },
-  investigation: { opensPr: false, driver: false, delegate: false, skills: ["how", "unslop"], skippable: ["why"] },
+  "bug-fix": { opensPr: true, driver: true, delegate: true, beforeCommit: ["how"], skills: [...OPENING_A_PR, "how"], skippable: ["why", "tdd"] },
+  feature: { opensPr: true, driver: true, delegate: true, beforeCommit: ["how", "architect"], skills: [...OPENING_A_PR, "how", "architect"], skippable: ["interrogate"] },
+  investigation: { opensPr: false, driver: false, delegate: false, beforeCommit: [], skills: ["how", "unslop"], skippable: ["why"] },
 };
 
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
@@ -107,6 +107,7 @@ export function readTranscript(jsonl) {
     skills: calls.filter((c) => c.name === "Skill").map((c) => String(c.input.skill).replace(/^\//, "")),
     agents: calls.filter((c) => c.name === "Agent").map((c) => c.input.subagent_type ?? ""),
     bash: calls.filter((c) => c.name === "Bash").map((c) => String(c.input.command)),
+    calls,
   };
 }
 
@@ -276,7 +277,8 @@ ${audit}
 
 function claude(cwd, state, round, sessionArgs, prompt) {
   const settings = join(cwd, ".audit/settings.json");
-  writeFileSync(settings, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: `node ${fileURLToPath(import.meta.url)} stop-hook` }] }] } }));
+  const hook = (name) => [{ hooks: [{ type: "command", command: `node ${fileURLToPath(import.meta.url)} ${name}` }] }];
+  writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook("stop-hook"), PreToolUse: [{ matcher: "Edit|Write|Bash", ...hook("pre-tool-hook")[0] }] } }));
   rmSync(join(cwd, STOP_COUNT), { force: true });
   const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--settings", settings, "--permission-mode", "acceptEdits", "--allowedTools", toolsFor(state).join(","), "--output-format", "json"], {
     cwd, encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
@@ -323,6 +325,46 @@ const claudeOutputs = (cwd) => readdirSync(join(cwd, ".audit")).filter((f) => /^
 export function stopDecision(gaps, count) {
   if (!gaps.length || count >= STOP_HOOK_LIMIT) return null;
   return { decision: "block", reason: `The routine's audit still finds these gaps:\n${gaps.map((g) => `- ${g}`).join("\n")}\nClose each one, or append skip: <reason> to its line in .audit/todo.md, then finish.` };
+}
+
+const GIT_COMMIT = /\bgit\s+commit\b/;
+const PR_CREATE = /\bgh\s+api\b.*\/pulls\b.*\s-[fF]\s+(head|base)=/;
+const LEAD_EDITABLE = /^\.audit\/|(^|\/)CHANGELOG\.md$/;
+
+export function preToolDecision(call, transcript, playbook, cwd) {
+  const rules = PLAYBOOKS[playbook];
+  if (!rules.opensPr) return null;
+  const lead = !call.agent_id;
+  const ran = (skill) => usedSkill(transcript.skills, skill);
+  const missing = (skills) => skills.filter((s) => !ran(s));
+  if (lead && rules.delegate && ["Edit", "Write"].includes(call.tool_name)) {
+    const path = String(call.tool_input.file_path ?? "").replace(`${cwd}/`, "");
+    if (!TEST_PATH.test(path) && !LEAD_EDITABLE.test(path)) return `Delegate this edit to a pstack:poteto-agent subagent, as the playbook's delegation step says. The lead edits only tests, CHANGELOG.md and .audit/. Refused: ${path}`;
+  }
+  if (call.tool_name !== "Bash") return null;
+  const command = String(call.tool_input.command);
+  if (GIT_COMMIT.test(command)) {
+    const needed = missing(rules.beforeCommit);
+    if (lead) {
+      needed.push(...missing(["technical-writing", "unslop"]));
+      const lastEdit = transcript.calls.findLastIndex((c) => ["Edit", "Write"].includes(c.name));
+      const lastDeslop = transcript.calls.findLastIndex((c) => c.name === "Skill" && /(^|:)deslop$/.test(String(c.input.skill)));
+      if (lastDeslop < lastEdit || lastDeslop === -1) needed.push("deslop (after your last edit)");
+    }
+    if (needed.length) return `Run these skills before you commit: ${needed.join(", ")}.`;
+  }
+  if (PR_CREATE.test(command)) {
+    const needed = missing(["no-comments", "technical-writing", "unslop"]);
+    if (needed.length) return `Run these skills before you open the PR: ${needed.join(", ")}.`;
+  }
+  return null;
+}
+
+function preToolHook(cwd, input) {
+  const state = loadState(cwd);
+  const path = transcriptPath(state.sessionId);
+  const transcript = readTranscript(path ? readFileSync(path, "utf8") : "");
+  return preToolDecision(input, transcript, state.playbook, cwd);
 }
 
 function stopHook(cwd) {
@@ -405,6 +447,11 @@ function gate(cwd) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const [command, arg] = process.argv.slice(2);
   const cwd = process.cwd();
+  if (command === "pre-tool-hook") {
+    const reason = preToolHook(cwd, JSON.parse(readFileSync(0, "utf8")));
+    if (reason) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }));
+    process.exit(0);
+  }
   if (command === "stop-hook") {
     const decision = stopHook(cwd);
     if (decision) console.log(JSON.stringify(decision));
