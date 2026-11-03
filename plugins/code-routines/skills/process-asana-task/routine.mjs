@@ -337,11 +337,14 @@ export const MERGE_CHECKS = [
   ["the gate has no violations", (c) => c.violations.length === 0],
   ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
   ["CI is green or the repo has none", (c) => ["green", "none"].includes(readJson(join(c.cwd, CI_RESULT))?.state)],
+  ["an independent review returned PASS", (c) => reviewVerdict(join(c.cwd, REVIEW_RESULT)) === "PASS"],
 ];
 
 export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !passes(ctx)).map(([name]) => name);
 
 const CI_RESULT = ".audit/ci.json";
+const REVIEW_RESULT = ".audit/review.md";
+export const reviewVerdict = (path) => (existsSync(path) ? readFileSync(path, "utf8").trimStart().split("\n")[0].trim() : null);
 const readJson = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
