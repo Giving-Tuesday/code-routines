@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, ciState, failedMergeChecks, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -125,6 +125,7 @@ test("merge checks pass only for a clean merge-mode run against a release branch
   const ci = mkdtempSync(join(tmpdir(), "routine-"));
   mkdirSync(join(ci, ".audit"));
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
+  writeFileSync(join(ci, ".audit/review.md"), "PASS\n\nNo high or critical findings.\n");
   const clean = { cwd: ci, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks(clean), []);
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "red" }));
@@ -140,4 +141,11 @@ test("CI state reads check runs", () => {
   assert.equal(ciState([{ name: "lint", status: "in_progress" }]).state, "pending");
   assert.deepEqual(ciState([{ name: "lint", status: "completed", conclusion: "success" }, { name: "test", status: "completed", conclusion: "failure" }]), { state: "red", failed: ["test"] });
   assert.equal(ciState([{ name: "lint", status: "completed", conclusion: "skipped" }]).state, "green");
+});
+
+test("the review verdict is the first line of review.md, and a missing file fails", () => {
+  const dir = mkdtempSync(join(tmpdir(), "review-"));
+  assert.equal(reviewVerdict(join(dir, "review.md")), null);
+  writeFileSync(join(dir, "review.md"), "\nFAIL\n| high | src/a.ts:3 | null deref |\n");
+  assert.equal(reviewVerdict(join(dir, "review.md")), "FAIL");
 });
