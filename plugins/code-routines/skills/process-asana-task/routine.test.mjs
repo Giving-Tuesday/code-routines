@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -177,4 +177,9 @@ test("the PreToolUse hook enforces delegation and skill order", () => {
   assert.match(preToolDecision(bash("gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x"), t("technical-writing", "unslop"), "bug-fix", "/w"), /no-comments/);
   assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), t(), "bug-fix", "/w"), null);
   assert.equal(preToolDecision(edit("src/a.ts"), t(), "investigation", "/w"), null);
+});
+
+test("the prompt names the Playwright browser only where one is installed", () => {
+  assert.equal(browserFact({}), "");
+  assert.match(browserFact({ PLAYWRIGHT_BROWSERS_PATH: "/opt/pw-browsers" }), /require\("playwright"\).*\/opt\/pw-browsers.*google-chrome is not installed/s);
 });
