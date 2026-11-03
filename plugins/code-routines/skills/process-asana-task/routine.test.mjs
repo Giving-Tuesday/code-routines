@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, failedMergeChecks, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -118,4 +118,12 @@ test("the Stop hook blocks while gaps remain, up to its limit", () => {
   assert.match(stopDecision(["skill unslop never ran"], 0).reason, /- skill unslop never ran/);
   assert.equal(stopDecision(["skill unslop never ran"], 0).decision, "block");
   assert.equal(stopDecision(["skill unslop never ran"], 3), null);
+});
+
+test("merge checks pass only for a clean merge-mode run against a release branch", () => {
+  const clean = { mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
+  assert.deepEqual(failedMergeChecks(clean), []);
+  assert.deepEqual(failedMergeChecks({ ...clean, mode: "pr" }), ["Mode is merge"]);
+  assert.deepEqual(failedMergeChecks({ ...clean, base: "main", pr: { state: "open", base: "main" } }), ["BASE is a release branch"]);
+  assert.deepEqual(failedMergeChecks({ ...clean, violations: ["no PR"], pr: null }), ["the gate has no violations", "the PR is open against BASE"]);
 });

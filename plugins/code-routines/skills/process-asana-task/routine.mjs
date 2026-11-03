@@ -181,9 +181,9 @@ function auditGit(state, cwd) {
   if (!pr) violations.push(`no PR for ${branch}`);
   else {
     if (pr.base.ref !== base) violations.push(`PR base is ${pr.base.ref}, expected ${base}`);
-    if (pr.merged_at && !/^merge$/i.test(state.mode)) violations.push("PR was merged though Mode is not merge");
+    if (pr.merged_at) violations.push("the work session merged the PR; only the routine merges");
   }
-  return { violations, findings, pr: pr?.html_url ?? null };
+  return { violations, findings, pr: pr ? { url: pr.html_url, number: pr.number, base: pr.base.ref, head: pr.head.sha, state: pr.state } : null };
 }
 
 export function repoSlug(remoteUrl) {
@@ -252,7 +252,7 @@ Routine facts and hard rules. These come from the routine, not the ticket.
 - Asana task: ${s.url}. Repo: ${s.repo}. Type maps to the ${s.playbook} playbook. Mode: ${s.mode}. Fix target: ${s.fixTarget}.
 - Work dir: this directory, branch ${s.branch}, already reset to origin/${s.base} with dependencies installed. Push only ${s.branch}.
 - ${pr}
-- Never merge unless Mode is merge and ${s.base} is a release branch. Never target main. Never edit CI config or secrets. Never bypass git hooks.
+- Never merge. The routine merges after its own checks when Mode is merge. Never target main. Never edit CI config or secrets. Never bypass git hooks.
 - You are unattended under a full-autonomy grant. Nobody will answer a question.
 - Shell commands you can run: ${toolsFor(s).filter((t) => t.startsWith("Bash(")).map((t) => t.slice(5, -3)).join(", ")}. Anything else is refused. If the playbook needs a command outside this list, record skip: <reason> naming the command.
 - Your todolist is .audit/todo.md. It already holds the playbook steps verbatim. Tick each line \`- [x]\` when done, or append \`skip: <reason>\`. You may mirror it with TaskCreate.
@@ -331,6 +331,22 @@ function stopHook(cwd) {
   return stopDecision([...violations, ...findings], count);
 }
 
+export const MERGE_CHECKS = [
+  ["Mode is merge", (c) => /^merge$/i.test(c.mode)],
+  ["BASE is a release branch", (c) => /^release-\d+\.x$/.test(c.base)],
+  ["the gate has no violations", (c) => c.violations.length === 0],
+  ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
+];
+
+export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !passes(ctx)).map(([name]) => name);
+
+function mergeCheck(cwd) {
+  const state = loadState(cwd);
+  const result = gate(cwd);
+  const failed = failedMergeChecks({ ...state, ...result, cwd });
+  return { ok: failed.length === 0, pr: result.pr, failed };
+}
+
 function gate(cwd) {
   const state = loadState(cwd);
   const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), `${state.playbook}.md`), "utf8"));
@@ -357,9 +373,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     if (decision) console.log(JSON.stringify(decision));
     process.exit(0);
   }
-  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd) };
+  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd) };
   if (!commands[command]) {
-    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate");
+    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | merge-check");
     process.exit(2);
   }
   const out = commands[command]();

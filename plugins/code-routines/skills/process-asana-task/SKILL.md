@@ -31,11 +31,16 @@ NOTIFY-BLOCKED: NOTIFY with the reasons, mark the task [blocked], and move it to
 
 6. Post a comment on the Asana task with `.audit/result.md`, a "Process audit" section with the gate's `findings` and the auditor's verdict and table, and any `violations`.
 
-7. If `violations` is empty, move the task to "Needs review" and NOTIFY with the PR link and the audit verdict. Otherwise NOTIFY-BLOCKED with the `violations`.
+7. If the gate reports `violations`, NOTIFY-BLOCKED with them and stop.
+
+   If Mode is merge, run `node <this skill's directory>/routine.mjs merge-check`. When it exits 0, squash-merge the PR with the GitHub connector. When it exits non-zero, do not merge, and put its `failed` checks in the Asana comment.
+
+   Move the task to "Needs review" and NOTIFY with the PR link, whether it merged, any failed merge checks, and the audit verdict.
 
 8. End with a summary in this session's output: the outcome and the PR link.
 
 Rules:
 
-- Never merge, and never move a task to "Needs review" while the gate reports `violations`.
+- Merge only in step 7, and only when `merge-check` exits 0.
+- Never move a task to "Needs review" while the gate reports `violations`.
 - Never edit CI config or secrets.
