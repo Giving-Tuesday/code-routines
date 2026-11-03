@@ -203,6 +203,12 @@ export function withScreenshots(body, images) {
   return `${text.trimEnd()}\n\n## Screenshots\n\n${block}\n`;
 }
 
+export function shrinkScreenshot(file, outDir) {
+  mkdirSync(outDir, { recursive: true });
+  const out = join(outDir, file.split("/").pop());
+  return trySh("convert", [file, "-resize", "1280x>", "-strip", "-colors", "256", `PNG8:${out}`], outDir) === null ? file : out;
+}
+
 export function uploadScreenshots(files, cwd) {
   const git = (args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).trim();
   for (let attempt = 0; ; attempt++) {
@@ -222,7 +228,7 @@ function attachScreenshots(cwd) {
   const pngs = readdirSync(join(cwd, ".audit")).filter((f) => f.endsWith(".png")).sort();
   const pr = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=open&head=${state.slug.split("/")[0]}:${state.branch}`], cwd) ?? "[]")[0];
   if (!pngs.length || !pr) return { ok: true, attached: 0, reason: pngs.length ? "no open PR" : "no .audit/*.png" };
-  const files = pngs.map((name) => ({ name, path: `${state.branch}/${name}`, file: join(cwd, ".audit", name) }));
+  const files = pngs.map((name) => ({ name, path: `${state.branch}/${name}`, file: shrinkScreenshot(join(cwd, ".audit", name), join(cwd, ".audit/shrunk")) }));
   const commit = uploadScreenshots(files, cwd);
   const images = files.map(({ name, path }) => ({ name, url: `https://github.com/${state.slug}/blob/${commit}/${path}?raw=true` }));
   execFileSync("gh", ["api", "-X", "PATCH", `repos/${state.slug}/pulls/${pr.number}`, "--input", "-"], { cwd, input: JSON.stringify({ body: withScreenshots(pr.body, images) }), stdio: ["pipe", "ignore", "pipe"] });
