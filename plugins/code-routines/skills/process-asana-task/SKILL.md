@@ -33,7 +33,7 @@ NOTIFY-BLOCKED: NOTIFY with the reasons, mark the task [blocked], and move it to
 
 7. If the gate reports `violations`, NOTIFY-BLOCKED with them and stop.
 
-   If Mode is merge, run `node <this skill's directory>/routine.mjs await-ci` in the background with a timeout of at least 35 minutes, and wait for it. It waits for every check run on the PR head to finish. Then run `node <this skill's directory>/routine.mjs merge-check`. When it exits 0, squash-merge the PR with the GitHub connector. When it exits non-zero, do not merge, and put its `failed` checks in the Asana comment.
+   If Mode is merge, run `node <this skill's directory>/routine.mjs await-ci` in the background with a timeout of at least 35 minutes, and wait for it. It waits for every check run on the PR head to finish. Then run `node <this skill's directory>/routine.mjs merge-check`. When it exits 0, merge the PR with the GitHub connector as a merge commit, never a squash, so the test commit stays ahead of the fix commit in history. When it exits non-zero, do not merge, and put its `failed` checks in the Asana comment.
 
    Move the task to "Needs review" and NOTIFY with the PR link, whether it merged, any failed merge checks, and the audit verdict.
 
