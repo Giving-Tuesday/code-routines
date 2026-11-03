@@ -336,9 +336,39 @@ export const MERGE_CHECKS = [
   ["BASE is a release branch", (c) => /^release-\d+\.x$/.test(c.base)],
   ["the gate has no violations", (c) => c.violations.length === 0],
   ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
+  ["CI is green or the repo has none", (c) => ["green", "none"].includes(readJson(join(c.cwd, CI_RESULT))?.state)],
 ];
 
 export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !passes(ctx)).map(([name]) => name);
+
+const CI_RESULT = ".audit/ci.json";
+const readJson = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+export function ciState(runs) {
+  if (!runs.length) return { state: "none", failed: [] };
+  if (runs.some((r) => r.status !== "completed")) return { state: "pending", failed: [] };
+  const failed = runs.filter((r) => !["success", "neutral", "skipped"].includes(r.conclusion)).map((r) => r.name);
+  return { state: failed.length ? "red" : "green", failed };
+}
+
+function awaitCi(cwd, { timeoutMs = 30 * 60_000, noneAfterMs = 5 * 60_000, pollMs = 30_000 } = {}) {
+  const { slug } = loadState(cwd);
+  const head = sh("git", ["rev-parse", "HEAD"], cwd);
+  const start = Date.now();
+  let result;
+  for (;;) {
+    const runs = JSON.parse(trySh("gh", ["api", `repos/${slug}/commits/${head}/check-runs?per_page=100`], cwd) ?? "{}").check_runs ?? [];
+    result = ciState(runs);
+    const waited = Date.now() - start;
+    if (result.state === "green" || result.state === "red") break;
+    if (result.state === "none" && waited >= noneAfterMs) break;
+    if (waited >= timeoutMs) { result = { state: "timeout", failed: [] }; break; }
+    sleep(pollMs);
+  }
+  writeFileSync(join(cwd, CI_RESULT), JSON.stringify({ head, ...result }, null, 2));
+  return { ok: result.state === "green" || result.state === "none", head, ...result };
+}
 
 function mergeCheck(cwd) {
   const state = loadState(cwd);
@@ -373,9 +403,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     if (decision) console.log(JSON.stringify(decision));
     process.exit(0);
   }
-  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd) };
+  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd), "await-ci": () => awaitCi(cwd) };
   if (!commands[command]) {
-    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | merge-check");
+    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | await-ci | merge-check");
     process.exit(2);
   }
   const out = commands[command]();

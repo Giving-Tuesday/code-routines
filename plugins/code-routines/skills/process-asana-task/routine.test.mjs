@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, failedMergeChecks, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, ciState, failedMergeChecks, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -121,9 +122,22 @@ test("the Stop hook blocks while gaps remain, up to its limit", () => {
 });
 
 test("merge checks pass only for a clean merge-mode run against a release branch", () => {
-  const clean = { mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
+  const ci = mkdtempSync(join(tmpdir(), "routine-"));
+  mkdirSync(join(ci, ".audit"));
+  writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
+  const clean = { cwd: ci, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks(clean), []);
+  writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "red" }));
+  assert.deepEqual(failedMergeChecks(clean), ["CI is green or the repo has none"]);
+  writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   assert.deepEqual(failedMergeChecks({ ...clean, mode: "pr" }), ["Mode is merge"]);
   assert.deepEqual(failedMergeChecks({ ...clean, base: "main", pr: { state: "open", base: "main" } }), ["BASE is a release branch"]);
   assert.deepEqual(failedMergeChecks({ ...clean, violations: ["no PR"], pr: null }), ["the gate has no violations", "the PR is open against BASE"]);
+});
+
+test("CI state reads check runs", () => {
+  assert.deepEqual(ciState([]), { state: "none", failed: [] });
+  assert.equal(ciState([{ name: "lint", status: "in_progress" }]).state, "pending");
+  assert.deepEqual(ciState([{ name: "lint", status: "completed", conclusion: "success" }, { name: "test", status: "completed", conclusion: "failure" }]), { state: "red", failed: ["test"] });
+  assert.equal(ciState([{ name: "lint", status: "completed", conclusion: "skipped" }]).state, "green");
 });
