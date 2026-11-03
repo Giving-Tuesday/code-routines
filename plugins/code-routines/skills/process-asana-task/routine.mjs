@@ -204,6 +204,8 @@ export function pstackPlaybooks() {
   return found.at(-1);
 }
 
+export const pstackRoot = () => join(pstackPlaybooks(), "../../..");
+
 const STATE = ".audit/routine.json";
 const loadState = (cwd) => JSON.parse(readFileSync(join(cwd, STATE), "utf8"));
 const saveState = (cwd, state) => writeFileSync(join(cwd, STATE), JSON.stringify(state, null, 2));
@@ -284,7 +286,7 @@ function claude(cwd, state, round, sessionArgs, prompt) {
   const hook = (name) => [{ hooks: [{ type: "command", command: `node ${fileURLToPath(import.meta.url)} ${name}` }] }];
   writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook("stop-hook"), PreToolUse: [{ matcher: "Edit|Write|Bash", ...hook("pre-tool-hook")[0] }] } }));
   rmSync(join(cwd, STOP_COUNT), { force: true });
-  const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--settings", settings, "--permission-mode", "acceptEdits", "--allowedTools", toolsFor(state).join(","), "--output-format", "json"], {
+  const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--settings", settings, "--add-dir", pstackRoot(), "--permission-mode", "acceptEdits", "--allowedTools", toolsFor(state).join(","), "--output-format", "json"], {
     cwd, encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
   });
   writeFileSync(join(cwd, `.audit/claude-${round}.json`), result.stdout ?? "");
