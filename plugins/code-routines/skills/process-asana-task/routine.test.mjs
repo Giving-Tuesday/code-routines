@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -126,7 +126,7 @@ test("merge checks pass only for a clean merge-mode run against a release branch
   mkdirSync(join(ci, ".audit"));
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   writeFileSync(join(ci, ".audit/review.md"), "PASS\n\nNo high or critical findings.\n");
-  const clean = { cwd: ci, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
+  const clean = { cwd: ci, mode: "merge", base: "release-2.x", violations: [], findings: ["skill how never ran"], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks(clean), []);
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "red" }));
   assert.deepEqual(failedMergeChecks(clean), ["CI is green or the repo has none"]);
@@ -148,4 +148,14 @@ test("the review verdict is the first line of review.md, and a missing file fail
   assert.equal(reviewVerdict(join(dir, "review.md")), null);
   writeFileSync(join(dir, "review.md"), "\nFAIL\n| high | src/a.ts:3 | null deref |\n");
   assert.equal(reviewVerdict(join(dir, "review.md")), "FAIL");
+});
+
+test("order findings never block a merge, but outcome findings do", () => {
+  const dir = mkdtempSync(join(tmpdir(), "outcome-"));
+  mkdirSync(join(dir, ".audit"));
+  writeFileSync(join(dir, ".audit/ci.json"), JSON.stringify({ state: "green" }));
+  writeFileSync(join(dir, ".audit/review.md"), "PASS\n");
+  const ctx = { cwd: dir, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
+  assert.deepEqual(failedMergeChecks({ ...ctx, findings: ["skill how never ran", "todolist step 3 is pending, not completed"] }), []);
+  assert.deepEqual(failedMergeChecks({ ...ctx, findings: [NO_DRIVER, NOT_DELEGATED] }), ["the change was checked on its real surface", "the code was written by a delegate"]);
 });

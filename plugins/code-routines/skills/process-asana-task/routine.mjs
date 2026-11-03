@@ -17,6 +17,8 @@ const BASE_TOOLS = [
   "Bash(echo:*)", "Bash(printf:*)", "Bash(cd:*)", "Bash(pwd)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(diff:*)", "Bash(test:*)",
 ];
 const STOP_HOOK_LIMIT = 3;
+export const NO_DRIVER = "no driver skill (run or verify) ran on the real surface";
+export const NOT_DELEGATED = "code was not delegated to a pstack:poteto-agent subagent";
 
 export const TOOLCHAINS = [
   { lock: "uv.lock", install: ["uv", ["sync", "--frozen"]], tools: ["uv", "uvx", "python", "python3", "pytest"] },
@@ -129,9 +131,9 @@ export function auditTranscript(transcript, playbook, steps, todo = "") {
   for (const skill of rules.skippable) {
     if (!usedSkill(transcript.skills, skill) && !skipped(skill)) problems.push(`skill ${skill} neither ran nor has a skip: reason in the todolist`);
   }
-  if (rules.driver && !transcript.skills.some((s) => DRIVER.test(s))) problems.push("no driver skill (run or verify) ran on the real surface");
+  if (rules.driver && !transcript.skills.some((s) => DRIVER.test(s))) problems.push(NO_DRIVER);
   if (rules.delegate && !transcript.agents.includes("pstack:poteto-agent") && !usedSkill(transcript.skills, "arena")) {
-    problems.push("code was not delegated to a pstack:poteto-agent subagent");
+    problems.push(NOT_DELEGATED);
   }
   if (!transcript.bash.some((c) => c.includes("check-playbooks.mjs"))) problems.push("check-playbooks.mjs never ran");
   return problems;
@@ -338,6 +340,8 @@ export const MERGE_CHECKS = [
   ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
   ["CI is green or the repo has none", (c) => ["green", "none"].includes(readJson(join(c.cwd, CI_RESULT))?.state)],
   ["an independent review returned PASS", (c) => reviewVerdict(join(c.cwd, REVIEW_RESULT)) === "PASS"],
+  ["the change was checked on its real surface", (c) => !c.findings.includes(NO_DRIVER)],
+  ["the code was written by a delegate", (c) => !c.findings.includes(NOT_DELEGATED)],
 ];
 
 export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !passes(ctx)).map(([name]) => name);
