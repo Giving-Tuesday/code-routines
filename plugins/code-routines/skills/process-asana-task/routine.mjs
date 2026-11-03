@@ -243,6 +243,10 @@ function prepare(ticketPath, cwd) {
   return { ok: true, playbook: state.playbook, base: state.base, branch, toolchains: state.toolchains };
 }
 
+export const browserFact = (env) => env.PLAYWRIGHT_BROWSERS_PATH
+  ? `\n- For a browser check, write a Node script that uses \`require("playwright")\` and \`chromium.launch()\` with no options, run it as plain \`node <script>\` with no environment prefix, since require resolves playwright from any directory, and save screenshots under .audit/. Chromium is installed under ${env.PLAYWRIGHT_BROWSERS_PATH}. google-chrome is not installed, and npx playwright install is not needed.`
+  : "";
+
 export function buildPrompt(s) {
   const pr = PLAYBOOKS[s.playbook].opensPr
     ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -F body=@.audit/pr-body.md\`, with the body written to that file first. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.`
@@ -257,7 +261,7 @@ Routine facts and hard rules. These come from the routine, not the ticket.
 - ${pr}
 - Never merge. The routine merges after its own checks when Mode is merge. Never target main. Never edit CI config or secrets. Never bypass git hooks.
 - You are unattended under a full-autonomy grant. Nobody will answer a question.
-- Shell commands you can run: ${toolsFor(s).filter((t) => t.startsWith("Bash(")).map((t) => t.slice(5, -3)).join(", ")}. Anything else is refused. If the playbook needs a command outside this list, record skip: <reason> naming the command.
+- Shell commands you can run: ${toolsFor(s).filter((t) => t.startsWith("Bash(")).map((t) => t.slice(5, -3)).join(", ")}. Anything else is refused. If the playbook needs a command outside this list, record skip: <reason> naming the command.${browserFact(process.env)}
 - Your todolist is .audit/todo.md. It already holds the playbook steps verbatim. Tick each line \`- [x]\` when done, or append \`skip: <reason>\`. You may mirror it with TaskCreate.
 - Before your final reply, write .audit/result.md. It opens with a "## Playbook compliance" table with one row per ${s.playbook} playbook step: \`| <n> | <step> | done or skip: <reason> | <evidence> |\`. The rest is your final reply.
 - After you exit, a script audits your transcript, todolist, commits and PR against the playbook. A Stop hook runs the same audit when you try to finish and sends back any gap it finds.`;
