@@ -191,6 +191,44 @@ function auditGit(state, cwd) {
   return { violations, findings, pr: pr ? { url: pr.html_url, number: pr.number, base: pr.base.ref, head: pr.head.sha, state: pr.state } : null };
 }
 
+const SCREENSHOT_BRANCH = "routine-screenshots";
+const SCREENSHOTS_START = "<!-- routine-screenshots -->";
+const SCREENSHOTS_END = "<!-- /routine-screenshots -->";
+
+export function withScreenshots(body, images) {
+  const block = [SCREENSHOTS_START, ...images.map(({ name, url }) => `![${name}](${url})`), SCREENSHOTS_END].join("\n");
+  const text = (body ?? "").replace(new RegExp(`\\n*${SCREENSHOTS_START}[\\s\\S]*?${SCREENSHOTS_END}`), "");
+  const heading = text.match(/^#{1,6}\s*screenshots?\b.*$/im);
+  if (heading) return text.replace(heading[0], `${heading[0]}\n\n${block}`);
+  return `${text.trimEnd()}\n\n## Screenshots\n\n${block}\n`;
+}
+
+export function uploadScreenshots(files, cwd) {
+  const git = (args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).trim();
+  for (let attempt = 0; ; attempt++) {
+    const parent = trySh("git", ["fetch", "-q", "origin", SCREENSHOT_BRANCH], cwd) === null ? null : git(["rev-parse", "FETCH_HEAD"]);
+    const env = { GIT_INDEX_FILE: join(cwd, ".audit/screenshots.index") };
+    git(parent ? ["read-tree", parent] : ["read-tree", "--empty"], env);
+    for (const { path, file } of files) git(["update-index", "--add", "--cacheinfo", `100644,${git(["hash-object", "-w", file])},${path}`], env);
+    const tree = git(["write-tree"], env);
+    const commit = git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", `routine screenshots: ${files.map((f) => f.path).join(", ")}`]);
+    if (trySh("git", ["push", "-q", "origin", `${commit}:refs/heads/${SCREENSHOT_BRANCH}`], cwd) !== null) return commit;
+    if (attempt === 2) throw new Error(`could not push ${SCREENSHOT_BRANCH}`);
+  }
+}
+
+function attachScreenshots(cwd) {
+  const state = loadState(cwd);
+  const pngs = readdirSync(join(cwd, ".audit")).filter((f) => f.endsWith(".png")).sort();
+  const pr = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=open&head=${state.slug.split("/")[0]}:${state.branch}`], cwd) ?? "[]")[0];
+  if (!pngs.length || !pr) return { ok: true, attached: 0, reason: pngs.length ? "no open PR" : "no .audit/*.png" };
+  const files = pngs.map((name) => ({ name, path: `${state.branch}/${name}`, file: join(cwd, ".audit", name) }));
+  const commit = uploadScreenshots(files, cwd);
+  const images = files.map(({ name, path }) => ({ name, url: `https://github.com/${state.slug}/blob/${commit}/${path}?raw=true` }));
+  execFileSync("gh", ["api", "-X", "PATCH", `repos/${state.slug}/pulls/${pr.number}`, "--input", "-"], { cwd, input: JSON.stringify({ body: withScreenshots(pr.body, images) }), stdio: ["pipe", "ignore", "pipe"] });
+  return { ok: true, attached: images.length, pr: pr.html_url };
+}
+
 export function repoSlug(remoteUrl) {
   return remoteUrl.replace(/\.git$/, "").split(/[/:]/).slice(-2).join("/");
 }
@@ -249,7 +287,7 @@ function prepare(ticketPath, cwd) {
 }
 
 export const browserFact = (env) => env.PLAYWRIGHT_BROWSERS_PATH
-  ? `\n- For a browser check, write a Node script that uses \`require("playwright")\` and \`chromium.launch()\` with no options, run it as plain \`node <script>\` with no environment prefix, since require resolves playwright from any directory, and save screenshots under .audit/. Chromium is installed under ${env.PLAYWRIGHT_BROWSERS_PATH}. google-chrome is not installed, and npx playwright install is not needed.`
+  ? `\n- For a browser check, write a Node script that uses \`require("playwright")\` and \`chromium.launch()\` with no options, run it as plain \`node <script>\` with no environment prefix, since require resolves playwright from any directory, and save each screenshot as .audit/<what-it-shows>.png. The routine adds every .audit/*.png to the PR description, so save only screenshots a reviewer should see. Chromium is installed under ${env.PLAYWRIGHT_BROWSERS_PATH}. google-chrome is not installed, and npx playwright install is not needed.`
   : "";
 
 const PR_TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md", "PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "docs/PULL_REQUEST_TEMPLATE.md"];
@@ -478,9 +516,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     if (decision) console.log(JSON.stringify(decision));
     process.exit(0);
   }
-  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd), "await-ci": () => awaitCi(cwd) };
+  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd), "await-ci": () => awaitCi(cwd), "attach-screenshots": () => attachScreenshots(cwd) };
   if (!commands[command]) {
-    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | await-ci | merge-check");
+    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | attach-screenshots | await-ci | merge-check");
     process.exit(2);
   }
   const out = commands[command]();
