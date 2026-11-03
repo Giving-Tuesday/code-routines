@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -186,4 +186,21 @@ test("the prompt names the Playwright browser only where one is installed", () =
 
 test("the pstack root handed to --add-dir holds the poteto-mode playbooks", () => {
   assert.ok(existsSync(join(pstackRoot(), "skills/poteto-mode/playbooks/bug-fix.md")));
+});
+
+test("the repo's PR template is found and its headings are checked in the PR body", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tpl-"));
+  assert.equal(findPrTemplate(dir), null);
+  mkdirSync(join(dir, ".github/PULL_REQUEST_TEMPLATE"), { recursive: true });
+  writeFileSync(join(dir, ".github/PULL_REQUEST_TEMPLATE/feature.md"), "## Summary\n");
+  assert.equal(findPrTemplate(dir), ".github/PULL_REQUEST_TEMPLATE/feature.md");
+  writeFileSync(join(dir, ".github/pull_request_template.md"), "## Summary\n\n<!-- what -->\n\n## Test plan\n\n### Screenshots\n");
+  assert.equal(findPrTemplate(dir), ".github/pull_request_template.md");
+  const template = readFileSync(join(dir, ".github/pull_request_template.md"), "utf8");
+  assert.deepEqual(missingTemplateHeadings(template, "## Summary\nFixes it.\n## Test plan\nRan it.\n### Screenshots\nnone\n"), []);
+  assert.deepEqual(missingTemplateHeadings(template, "## Why\nFixes it.\n## Test plan\n"), ["Summary", "Screenshots"]);
+  assert.deepEqual(missingTemplateHeadings(template, null), ["Summary", "Test plan", "Screenshots"]);
+  const prompt = buildPrompt({ playbook: "bug-fix", base: "release-1.x", slug: "o/r", branch: "b", toolchains: [], prTemplate: ".github/pull_request_template.md", name: "n", text: "t", url: "u", repo: "r", mode: "pr", fixTarget: "f" });
+  assert.match(prompt, /headings of the repo's template, \.github\/pull_request_template\.md/);
+  assert.match(prompt, /mkdir, echo, printf, cd, pwd, wc/);
 });
