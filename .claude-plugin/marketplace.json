@@ -11,6 +11,12 @@
       "source": "./plugins/code-routines",
       "description": "Routines for Claude Code.",
       "version": "1.13.0"
+    },
+    {
+      "name": "gt-charts",
+      "source": "./plugins/gt-charts",
+      "description": "Build gt-charts example notebooks for Databricks from chart images.",
+      "version": "0.1.0"
     }
   ]
 }
