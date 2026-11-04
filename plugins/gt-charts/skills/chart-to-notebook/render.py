@@ -58,30 +58,53 @@ STYLE_KEYS = frozenset(
         "backgroundColor",
         "barCategoryGap",
         "barGap",
+        "barHeight",
         "barMaxWidth",
         "barWidth",
         "borderColor",
         "borderRadius",
         "borderWidth",
+        "bottom",
         "color",
+        "colors",
+        "connectorHeight",
+        "distance",
+        "emphasis",
         "fontFamily",
         "fontSize",
         "fontStyle",
         "fontWeight",
         "grid",
+        "interval",
         "itemStyle",
+        "labelLine",
+        "left",
         "lineHeight",
         "lineStyle",
+        "margin",
+        "nameGap",
         "opacity",
+        "orient",
         "padding",
         "rich",
+        "right",
+        "rotate",
+        "shadowBlur",
+        "shadowColor",
+        "showSymbol",
         "splitArea",
         "splitLine",
+        "splitNumber",
         "symbol",
         "symbolSize",
+        "textBorderColor",
+        "textBorderWidth",
         "textStyle",
+        "top",
+        "zebra",
     }
 )
+CHROME_STYLES = {"theme": "theme", "height": "height", "max_width": "maxWidth"}
 
 
 def style_paths(node, path=""):
@@ -90,11 +113,16 @@ def style_paths(node, path=""):
             here = f"{path}.{key}" if path else key
             if key in STYLE_KEYS:
                 yield here
-            else:
+            elif key != "source":
                 yield from style_paths(value, here)
     elif isinstance(node, list):
         for i, item in enumerate(node):
             yield from style_paths(item, f"{path}[{i}]")
+
+
+def chart_styles(chart: gt.Chart) -> list[str]:
+    chrome = [name for field, name in CHROME_STYLES.items() if getattr(chart, field)]
+    return [*style_paths(chart.option), *style_paths(chart.config, "config"), *chrome]
 
 
 def capture_charts(notebook: Path) -> list[gt.Chart]:
@@ -146,7 +174,7 @@ def main():
     if not charts:
         sys.exit("the notebook shows no chart; end each chart with .show()")
     for n, chart in enumerate(charts, 1):
-        styles = [*style_paths(chart.option), *(["theme"] if chart.theme else [])]
+        styles = chart_styles(chart)
         if styles:
             print(f"chart {n} sets style: {', '.join(styles)}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
