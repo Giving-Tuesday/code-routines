@@ -1,7 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gate } from "./audit.mjs";
-import { readIfExists, readJson, sh, trySh } from "./shell.mjs";
+import { ghGet, head as headSha } from "./github.mjs";
+import { readIfExists, readJson } from "./shell.mjs";
 import { CI_RESULT, REVIEW_RESULT, loadState } from "./state.mjs";
 
 export const reviewVerdict = (path) => readIfExists(path)?.trimStart().split("\n")[0].trim() ?? null;
@@ -27,12 +28,11 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 export function awaitCi(cwd, { timeoutMs = 30 * 60_000, noneAfterMs = 5 * 60_000, pollMs = 30_000 } = {}) {
   const { slug } = loadState(cwd);
-  const head = sh("git", ["rev-parse", "HEAD"], cwd);
+  const head = headSha(cwd);
   const start = Date.now();
   let result;
   for (;;) {
-    const checks = JSON.parse(trySh("gh", ["api", `repos/${slug}/commits/${head}/check-runs?per_page=100`], cwd) ?? "{}");
-    result = ciState(checks.check_runs ?? []);
+    result = ciState(ghGet(cwd, `repos/${slug}/commits/${head}/check-runs?per_page=100`)?.check_runs ?? []);
     const waited = Date.now() - start;
     if (result.state === "green" || result.state === "red") break;
     if (result.state === "none" && waited >= noneAfterMs) break;

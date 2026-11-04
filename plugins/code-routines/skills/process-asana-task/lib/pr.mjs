@@ -1,13 +1,11 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import process from "node:process";
 import { prBodyFindings, prReadiness } from "./audit.mjs";
-import { branchPushed, findPr } from "./github.mjs";
+import { branchPushed, findPr, ghWrite } from "./github.mjs";
 import { opensPr } from "./playbooks.mjs";
-import { readIfExists, trySh } from "./shell.mjs";
+import { readIfExists, sh, trySh } from "./shell.mjs";
 import { AUDIT_DIR, PR_BODY, PR_TITLE, RESULT, SCREENSHOT_INDEX, SHRUNK_DIR, loadState } from "./state.mjs";
-import { readTranscript, transcriptPath } from "./transcript.mjs";
+import { NO_TRANSCRIPT, loadTranscript } from "./transcript.mjs";
 
 const nonEmpty = (path) => {
   const text = readIfExists(path);
@@ -31,20 +29,18 @@ function prText(cwd, state) {
 export function openPr(cwd) {
   const state = loadState(cwd);
   if (!opensPr(state.playbook)) return { ok: true, skipped: `${state.playbook} opens no PR` };
-  const path = transcriptPath(state.sessionId);
   const { title, body, findings: defaults } = prText(cwd, state);
+  const transcript = loadTranscript(state);
   const findings = [
     ...defaults,
-    ...(path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"]),
+    ...(transcript ? prReadiness(transcript) : [NO_TRANSCRIPT]),
     ...prBodyFindings(cwd, state, body),
   ];
   if (!branchPushed(cwd, state.branch)) return { ok: false, problems: [`origin/${state.branch} does not match HEAD`], findings };
-  const api = (args, input) =>
-    JSON.parse(execFileSync("gh", ["api", ...args, "--input", "-"], { cwd, encoding: "utf8", input: JSON.stringify(input) }));
   const open = findPr(cwd, state, "open");
   const pr = open
-    ? api(["-X", "PATCH", `repos/${state.slug}/pulls/${open.number}`], { title, body })
-    : api(["-X", "POST", `repos/${state.slug}/pulls`], { title, body, head: state.branch, base: state.base, draft: false });
+    ? ghWrite(cwd, "PATCH", `repos/${state.slug}/pulls/${open.number}`, { title, body })
+    : ghWrite(cwd, "POST", `repos/${state.slug}/pulls`, { title, body, head: state.branch, base: state.base, draft: false });
   return { ok: true, pr: pr.html_url, findings };
 }
 
@@ -68,7 +64,7 @@ export function shrinkScreenshot(file, outDir) {
 }
 
 function uploadScreenshots(files, cwd) {
-  const git = (args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).trim();
+  const git = (args, env) => sh("git", args, cwd, { env });
   const index = { GIT_INDEX_FILE: join(cwd, SCREENSHOT_INDEX) };
   const message = `routine screenshots: ${files.map((f) => f.path).join(", ")}`;
   for (let attempt = 0; ; attempt++) {
@@ -100,10 +96,6 @@ export function attachScreenshots(cwd) {
     name,
     url: `https://github.com/${state.slug}/blob/${commit}/${path}?raw=true`,
   }));
-  execFileSync("gh", ["api", "-X", "PATCH", `repos/${state.slug}/pulls/${pr.number}`, "--input", "-"], {
-    cwd,
-    input: JSON.stringify({ body: withScreenshots(pr.body, images) }),
-    stdio: ["pipe", "ignore", "pipe"],
-  });
+  ghWrite(cwd, "PATCH", `repos/${state.slug}/pulls/${pr.number}`, { body: withScreenshots(pr.body, images) });
   return { ok: true, attached: images.length, pr: pr.html_url };
 }

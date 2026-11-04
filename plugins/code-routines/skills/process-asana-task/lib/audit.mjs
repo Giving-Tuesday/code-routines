@@ -4,7 +4,7 @@ import { branchPushed, findPr, missingTemplateHeadings } from "./github.mjs";
 import { PLAYBOOKS, opensPr, playbookStepsFor } from "./playbooks.mjs";
 import { readIfExists, sh, trySh } from "./shell.mjs";
 import { PR_BODY, RESULT, TODO, claudeOutputs, loadState } from "./state.mjs";
-import { readTranscript, skillName, summarizeDenials, transcriptPath, usedSkill } from "./transcript.mjs";
+import { NO_TRANSCRIPT, loadTranscript, skillName, summarizeDenials, transcriptPath, usedSkill } from "./transcript.mjs";
 
 export const NO_DRIVER = "no driver skill (run or verify) ran on the real surface";
 export const NOT_DELEGATED = "code was not delegated to a pstack:poteto-agent subagent";
@@ -129,20 +129,18 @@ export function auditGit(state, cwd) {
 export function gate(cwd) {
   const state = loadState(cwd);
   const steps = playbookStepsFor(state.playbook);
-  const path = state.sessionId && transcriptPath(state.sessionId);
   const resultPath = join(cwd, RESULT);
   const resultMd = readIfExists(resultPath);
   const git = auditGit(state, cwd);
   const todo = readIfExists(join(cwd, TODO)) ?? "";
   const audit = { projectPlaybooks: existsSync(join(cwd, ".agents/playbooks")) };
   const refusals = summarizeDenials(claudeOutputs(cwd).map((f) => readFileSync(f, "utf8")));
+  const transcript = loadTranscript(state);
   const findings = [
-    ...(path
-      ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo, audit)
-      : ["no transcript for the work session"]),
+    ...(transcript ? auditTranscript(transcript, state.playbook, steps, todo, audit) : [NO_TRANSCRIPT]),
     ...(resultMd === null ? [`no ${RESULT}`] : auditResult(resultMd, steps)),
     ...git.findings,
   ];
   const { violations, pr } = git;
-  return { ok: violations.length === 0, pr, transcript: path, result: resultPath, violations, findings, refusals };
+  return { ok: violations.length === 0, pr, transcript: transcriptPath(state.sessionId), result: resultPath, violations, findings, refusals };
 }

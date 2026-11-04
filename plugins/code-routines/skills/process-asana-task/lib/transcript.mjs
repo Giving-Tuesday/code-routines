@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { configDir } from "./shell.mjs";
 
@@ -49,9 +49,17 @@ export function readTranscript(jsonl) {
   };
 }
 
+export const NO_TRANSCRIPT = "no transcript for the work session";
+
 export function transcriptPath(sessionId) {
+  if (!sessionId) return null;
   const root = join(configDir(), "projects");
   return readdirSync(root).map((d) => join(root, d, `${sessionId}.jsonl`)).find(existsSync) ?? null;
+}
+
+export function loadTranscript(state) {
+  const path = transcriptPath(state.sessionId);
+  return path ? readTranscript(readFileSync(path, "utf8")) : null;
 }
 
 export function summarizeDenials(outputs) {

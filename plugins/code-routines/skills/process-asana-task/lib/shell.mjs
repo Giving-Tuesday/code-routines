@@ -4,8 +4,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 
-export const sh = (cmd, args, cwd) =>
-  execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+export const sh = (cmd, args, cwd, { input, env } = {}) =>
+  execFileSync(cmd, args, {
+    cwd,
+    encoding: "utf8",
+    input,
+    env: env && { ...process.env, ...env },
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+  }).trim();
 
 export function trySh(...args) {
   try {
