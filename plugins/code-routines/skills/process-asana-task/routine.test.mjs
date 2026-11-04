@@ -4,10 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, readFileSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditGit, auditResult, ignoreAudit, transcriptPath, prBodyFindings, browserFact, buildPrompt, checkoutWorkBranch, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditGit, auditResult, ignoreAudit, transcriptPath, prBodyFindings, browserFact, buildPrompt, checkoutWorkBranch, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, playbookStepsFor, auditTranscript, baseFor, parseTicket, playbookFor, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
-const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
+const steps = playbookStepsFor("bug-fix");
 
 let n = 0;
 const line = (type, content) => JSON.stringify({ type, isSidechain: false, message: { content } });

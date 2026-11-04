@@ -66,7 +66,7 @@ export function parseTicket(ticket) {
   return { playbook, base };
 }
 
-export function playbookSteps(markdown) {
+function playbookSteps(markdown) {
   return markdown.split("\n").flatMap((line) => {
     const m = line.match(/^(\d+)\.\s+(.+)$/);
     return m ? [{ n: Number(m[1]), text: m[2] }] : [];
@@ -136,7 +136,7 @@ export function auditTranscript(transcript, playbook, steps, todo = "", { projec
     if (!usedSkill(transcript.skills, skill) && !skipped(skill)) problems.push(`skill ${skill} neither ran nor has a skip: reason in the todolist`);
   }
   if (rules.driver && !DRIVERS.some((s) => usedSkill(transcript.skills, s))) problems.push(NO_DRIVER);
-  if (rules.delegate && !transcript.agents.includes("pstack:poteto-agent") && !usedSkill(transcript.skills, "arena")) {
+  if (rules.delegate && !transcript.agents.includes(DELEGATE) && !usedSkill(transcript.skills, "arena")) {
     problems.push(NOT_DELEGATED);
   }
   if (projectPlaybooks && !transcript.bash.some((c) => c.includes("check-playbooks.mjs"))) problems.push("check-playbooks.mjs never ran");
@@ -182,17 +182,15 @@ export function auditGit(state, cwd) {
     if (!first.length || !first.every((f) => TEST_PATH.test(f))) findings.push("first commit is not a test-only repro commit");
     if (!commits.slice(1).some((c) => files(c).some((f) => !TEST_PATH.test(f)))) findings.push("no fix commit after the repro commit");
   }
-  if (existsSync(join(cwd, "CHANGELOG.md"))) {
+  const changelog = readIfExists(join(cwd, "CHANGELOG.md"));
+  if (changelog !== null) {
     const before = unreleasedSection(trySh("git", ["show", `${from}:CHANGELOG.md`], cwd) ?? "");
-    const added = unreleasedSection(readFileSync(join(cwd, "CHANGELOG.md"), "utf8"))
+    const added = unreleasedSection(changelog)
       .split("\n").filter((l) => /^\s*[-*] /.test(l) && !before.includes(l));
     if (!added.length) findings.push("CHANGELOG.md [Unreleased] has no new bullet");
   }
-  if (trySh("git", ["ls-remote", "origin", `refs/heads/${branch}`], cwd)?.split("\t")[0] !== sh("git", ["rev-parse", "HEAD"], cwd)) {
-    findings.push(`origin/${branch} does not match HEAD`);
-  }
-  const pulls = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=all&head=${state.slug.split("/")[0]}:${branch}`], cwd) ?? "[]");
-  const pr = pulls[0];
+  if (!branchPushed(cwd, branch)) findings.push(`origin/${branch} does not match HEAD`);
+  const pr = findPr(cwd, state, "all");
   if (!pr) violations.push(`no PR for ${branch}`);
   else {
     if (pr.base.ref !== base) violations.push(`PR base is ${pr.base.ref}, expected ${base}`);
@@ -220,7 +218,7 @@ export function shrinkScreenshot(file, outDir) {
   return trySh("convert", [file, "-resize", "1280x>", "-strip", "-colors", "256", `PNG8:${out}`], outDir) === null ? file : out;
 }
 
-export function uploadScreenshots(files, cwd) {
+function uploadScreenshots(files, cwd) {
   const git = (args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).trim();
   for (let attempt = 0; ; attempt++) {
     const parent = trySh("git", ["fetch", "-q", "origin", SCREENSHOT_BRANCH], cwd) === null ? null : git(["rev-parse", "FETCH_HEAD"]);
@@ -238,9 +236,9 @@ function openPr(cwd) {
   const state = loadState(cwd);
   if (!PLAYBOOKS[state.playbook].opensPr) return { ok: true, skipped: `${state.playbook} opens no PR` };
   const path = transcriptPath(state.sessionId);
-  const title = existsSync(join(cwd, ".audit/pr-title.txt")) ? readFileSync(join(cwd, ".audit/pr-title.txt"), "utf8").trim() : "";
-  const body = existsSync(join(cwd, ".audit/pr-body.md")) ? readFileSync(join(cwd, ".audit/pr-body.md"), "utf8") : "";
-  const pushed = trySh("git", ["ls-remote", "origin", `refs/heads/${state.branch}`], cwd)?.split("\t")[0] === sh("git", ["rev-parse", "HEAD"], cwd);
+  const title = (readIfExists(join(cwd, ".audit/pr-title.txt")) ?? "").trim();
+  const body = readIfExists(join(cwd, ".audit/pr-body.md")) ?? "";
+  const pushed = branchPushed(cwd, state.branch);
   const findings = [
     ...(path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"]),
     ...prBodyFindings(cwd, state, body),
@@ -252,7 +250,7 @@ function openPr(cwd) {
   ];
   if (problems.length) return { ok: false, problems, findings };
   const api = (args, input) => JSON.parse(execFileSync("gh", ["api", ...args, "--input", "-"], { cwd, encoding: "utf8", input: JSON.stringify(input) }));
-  const open = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=open&head=${state.slug.split("/")[0]}:${state.branch}`], cwd) ?? "[]")[0];
+  const open = findPr(cwd, state, "open");
   const pr = open
     ? api(["-X", "PATCH", `repos/${state.slug}/pulls/${open.number}`], { title, body })
     : api(["-X", "POST", `repos/${state.slug}/pulls`], { title, body, head: state.branch, base: state.base, draft: false });
@@ -262,7 +260,7 @@ function openPr(cwd) {
 function attachScreenshots(cwd) {
   const state = loadState(cwd);
   const pngs = readdirSync(join(cwd, ".audit")).filter((f) => f.endsWith(".png")).sort();
-  const pr = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=open&head=${state.slug.split("/")[0]}:${state.branch}`], cwd) ?? "[]")[0];
+  const pr = findPr(cwd, state, "open");
   if (!pngs.length || !pr) return { ok: true, attached: 0, reason: pngs.length ? "no open PR" : "no .audit/*.png" };
   const files = pngs.map((name) => ({ name, path: `${state.branch}/${name}`, file: shrinkScreenshot(join(cwd, ".audit", name), join(cwd, ".audit/shrunk")) }));
   const commit = uploadScreenshots(files, cwd);
@@ -270,6 +268,12 @@ function attachScreenshots(cwd) {
   execFileSync("gh", ["api", "-X", "PATCH", `repos/${state.slug}/pulls/${pr.number}`, "--input", "-"], { cwd, input: JSON.stringify({ body: withScreenshots(pr.body, images) }), stdio: ["pipe", "ignore", "pipe"] });
   return { ok: true, attached: images.length, pr: pr.html_url };
 }
+
+const findPr = (cwd, { slug, branch }, prState) =>
+  JSON.parse(trySh("gh", ["api", `repos/${slug}/pulls?state=${prState}&head=${slug.split("/")[0]}:${branch}`], cwd) ?? "[]")[0];
+
+const branchPushed = (cwd, branch) =>
+  trySh("git", ["ls-remote", "origin", `refs/heads/${branch}`], cwd)?.split("\t")[0] === sh("git", ["rev-parse", "HEAD"], cwd);
 
 export function repoSlug(remoteUrl) {
   return remoteUrl.replace(/\.git$/, "").split(/[/:]/).slice(-2).join("/");
@@ -287,6 +291,8 @@ export function pstackPlaybooks() {
   if (!found.length) throw new Error("pstack poteto-mode playbooks not found; set PSTACK_POTETO_DIR");
   return found.at(-1);
 }
+
+export const playbookStepsFor = (playbook) => playbookSteps(readFileSync(join(pstackPlaybooks(), `${playbook}.md`), "utf8"));
 
 export const pstackRoot = () => join(pstackPlaybooks(), "../../..");
 
@@ -335,7 +341,7 @@ function prepare(ticketPath, cwd) {
   for (const { install } of toolchains) {
     if (spawnSync(install[0], install[1], { cwd, stdio: "inherit" }).status !== 0) return { ok: false, problems: [`${install.flat().join(" ")} failed`] };
   }
-  writeFileSync(join(cwd, ".audit/todo.md"), seedTodo(parsed.playbook, playbookSteps(readFileSync(join(pstackPlaybooks(), `${parsed.playbook}.md`), "utf8"))));
+  writeFileSync(join(cwd, ".audit/todo.md"), seedTodo(parsed.playbook, playbookStepsFor(parsed.playbook)));
   const state = {
     ...parsed, branch, toolchains: toolchains.map((t) => t.lock), gid: ticket.gid, url: ticket.url, name: ticket.name, text: ticket.text,
     mode: ticket.fields.Mode, repo: ticket.fields.Repo, fixTarget: ticket.fields["Fix target"],
@@ -359,7 +365,7 @@ export function findPrTemplate(cwd) {
   return [...PR_TEMPLATES, ...inDir].find((p) => existsSync(join(cwd, p))) ?? null;
 }
 
-export const templateHeadings = (md) => md.split("\n").flatMap((l) => l.match(/^#{1,6}\s+(.+?)\s*$/)?.slice(1) ?? []);
+const templateHeadings = (md) => md.split("\n").flatMap((l) => l.match(/^#{1,6}\s+(.+?)\s*$/)?.slice(1) ?? []);
 
 export const missingTemplateHeadings = (template, body) => templateHeadings(template).filter((h) => !templateHeadings(body ?? "").includes(h));
 
@@ -482,13 +488,13 @@ export function preToolDecision(call, playbook, base) {
 
 function stopHook(cwd) {
   const countPath = join(cwd, STOP_COUNT);
-  const count = existsSync(countPath) ? Number(readFileSync(countPath, "utf8")) : 0;
+  const count = Number(readIfExists(countPath) ?? 0);
   writeFileSync(countPath, String(count + 1));
   const { violations, findings } = gate(cwd);
   return stopDecision([...violations.filter((v) => !v.startsWith("no PR for")), ...findings.filter((f) => !f.startsWith(REFUSED))], count);
 }
 
-export const MERGE_CHECKS = [
+const MERGE_CHECKS = [
   ["Mode is merge", (c) => /^merge$/i.test(c.mode)],
   ["the gate has no violations", (c) => c.violations.length === 0],
   ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
@@ -500,8 +506,8 @@ export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !p
 
 const CI_RESULT = ".audit/ci.json";
 const REVIEW_RESULT = ".audit/review.md";
-export const reviewVerdict = (path) => (existsSync(path) ? readFileSync(path, "utf8").trimStart().split("\n")[0].trim() : null);
-const readJson = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
+export const reviewVerdict = (path) => readIfExists(path)?.trimStart().split("\n")[0].trim() ?? null;
+const readJson = (path) => JSON.parse(readIfExists(path) ?? "null");
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 export function ciState(runs) {
@@ -538,17 +544,17 @@ function mergeCheck(cwd) {
 
 function gate(cwd) {
   const state = loadState(cwd);
-  const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), `${state.playbook}.md`), "utf8"));
+  const steps = playbookStepsFor(state.playbook);
   const path = state.sessionId && transcriptPath(state.sessionId);
   const resultPath = join(cwd, ".audit/result.md");
+  const resultMd = readIfExists(resultPath);
   const git = auditGit(state, cwd);
-  const todoPath = join(cwd, ".audit/todo.md");
-  const todo = existsSync(todoPath) ? readFileSync(todoPath, "utf8") : "";
+  const todo = readIfExists(join(cwd, ".audit/todo.md")) ?? "";
   const outputs = claudeOutputs(cwd).map((f) => readFileSync(f, "utf8"));
   const findings = [
     ...summarizeDenials(outputs),
     ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo, { projectPlaybooks: existsSync(join(cwd, ".agents/playbooks")) }) : ["no transcript for the work session"]),
-    ...(existsSync(resultPath) ? auditResult(readFileSync(resultPath, "utf8"), steps) : ["no .audit/result.md"]),
+    ...(resultMd === null ? ["no .audit/result.md"] : auditResult(resultMd, steps)),
     ...git.findings,
   ];
   return { ok: git.violations.length === 0, pr: git.pr, transcript: path, result: resultPath, violations: git.violations, findings };
