@@ -8,7 +8,7 @@ Rebuild the chart in image $0 with `gt.chart(...)` only, as a Databricks source 
 
 ## Read gt-charts first
 
-Read these from Giving-Tuesday/gt-charts at `release-2.x`. Use the local checkout if you are in one. Otherwise run `gh api -H "Accept: application/vnd.github.raw" "repos/Giving-Tuesday/gt-charts/contents/<path>?ref=release-2.x"`.
+Read these from Giving-Tuesday/gt-charts. In a local checkout, read its working tree. Otherwise read `release-2.x` with `gh api -H "Accept: application/vnd.github.raw" "repos/Giving-Tuesday/gt-charts/contents/<path>?ref=release-2.x"`.
 
 - `docs/using-gt-charts.md` for the API, the chart types, and "Building a chart the embed has no type for".
 - `notebooks/*.py` for the notebook format. Start from the example closest to the image.
@@ -35,15 +35,15 @@ If you cannot read the repo, stop and tell the user the skill needs access to Gi
    gt.chart(...).show()
    ```
 
-   Put the image's title, subtitle, and notes in the `title`, `subtitle`, and `description` keywords, never in `option.title`.
-4. Render the notebook with `render.py` in this skill's directory, using the gt-charts version the user's Databricks runs. If the user doesn't know it, use the newest `v2` tag from `git ls-remote --tags https://github.com/Giving-Tuesday/gt-charts`.
+   Put the image's title, subtitle, and notes in the `title`, `subtitle`, and `description` keywords, never in `option.title`. If the image has one long title, put the figure name in `title` and the rest in `subtitle`.
+4. Render the notebook with `render.py` in this skill's directory, using the gt-charts version the user's Databricks runs. If the user doesn't know it, use the newest `v2` tag, a beta included, from `git ls-remote --tags https://github.com/Giving-Tuesday/gt-charts`.
 
    ```bash
    uv run --with "gt-charts[export] @ git+https://github.com/Giving-Tuesday/gt-charts.git@<tag>" python <skill-dir>/render.py <notebook.py> --out-dir <tmp-dir>
    ```
 
-   - If it says "the embed rendered nothing", add `--local-bundle`.
-   - If Playwright cannot find a browser, run `playwright install chromium` in the same environment, or pass `--chromium <path>`.
+   - If it says "the embed rendered nothing", add `--local-bundle`. That option downloads the bundle with `npm`.
+   - If Playwright cannot find a browser and Chromium is installed, pass `--chromium <path>`. Otherwise run `playwright install chromium` in the same environment.
 5. View each PNG next to the source image. Compare every value, label, color, legend entry, and axis range. Fix the notebook and render again until they match. A difference the embed causes, such as its fonts, its title layout, or its download button, stays. Report it.
 6. Report the notebook path, the PNG path, the values you read with doubt, and the differences you left with the reason for each. To import the file, the user opens a Databricks workspace folder and chooses **Import**, then **File**.
 
