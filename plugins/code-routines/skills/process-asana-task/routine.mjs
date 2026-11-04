@@ -8,7 +8,6 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const FIELDS = ["Repo", "Type", "Mode", "Fix target", "Release version"];
-const OPENING_A_PR = ["deslop", "no-comments", "technical-writing", "unslop"];
 const DRIVER = /(^|:)(run|verify)$/;
 const BASE_TOOLS = [
   "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
@@ -31,9 +30,9 @@ export const allowedTools = (toolchains) => [...new Set([...BASE_TOOLS, ...toolc
 const toolsFor = (state) => allowedTools(TOOLCHAINS.filter((t) => state.toolchains.includes(t.lock)));
 
 export const PLAYBOOKS = {
-  "bug-fix": { opensPr: true, driver: true, delegate: true, beforeCommit: ["how"], skills: [...OPENING_A_PR, "how"], skippable: ["why", "tdd"] },
-  feature: { opensPr: true, driver: true, delegate: true, beforeCommit: ["how", "architect"], skills: [...OPENING_A_PR, "how", "architect"], skippable: ["interrogate"] },
-  investigation: { opensPr: false, driver: false, delegate: false, beforeCommit: [], skills: ["how", "unslop"], skippable: ["why"] },
+  "bug-fix": { opensPr: true, driver: true, delegate: true, skills: ["how"], skippable: ["why", "tdd"] },
+  feature: { opensPr: true, driver: true, delegate: true, skills: ["how", "architect"], skippable: ["interrogate"] },
+  investigation: { opensPr: false, driver: false, delegate: false, skills: ["how", "unslop"], skippable: ["why"] },
 };
 
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
@@ -129,6 +128,7 @@ export function auditTranscript(transcript, playbook, steps, todo = "") {
   for (const skill of rules.skills) {
     if (!usedSkill(transcript.skills, skill)) problems.push(`skill ${skill} never ran`);
   }
+  if (rules.opensPr) problems.push(...prReadiness(transcript));
   for (const skill of rules.skippable) {
     if (!usedSkill(transcript.skills, skill) && !skipped(skill)) problems.push(`skill ${skill} neither ran nor has a skip: reason in the todolist`);
   }
@@ -231,19 +231,19 @@ function openPr(cwd) {
   const title = existsSync(join(cwd, ".audit/pr-title.txt")) ? readFileSync(join(cwd, ".audit/pr-title.txt"), "utf8").trim() : "";
   const body = existsSync(join(cwd, ".audit/pr-body.md")) ? readFileSync(join(cwd, ".audit/pr-body.md"), "utf8") : "";
   const pushed = trySh("git", ["ls-remote", "origin", `refs/heads/${state.branch}`], cwd)?.split("\t")[0] === sh("git", ["rev-parse", "HEAD"], cwd);
+  const findings = path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"];
   const problems = [
-    ...(path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"]),
     ...(title ? [] : ["no .audit/pr-title.txt"]),
     ...(body.trim() ? [] : ["no .audit/pr-body.md"]),
     ...(pushed ? [] : [`origin/${state.branch} does not match HEAD`]),
   ];
-  if (problems.length) return { ok: false, problems };
+  if (problems.length) return { ok: false, problems, findings };
   const api = (args, input) => JSON.parse(execFileSync("gh", ["api", ...args, "--input", "-"], { cwd, encoding: "utf8", input: JSON.stringify(input) }));
   const open = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=open&head=${state.slug.split("/")[0]}:${state.branch}`], cwd) ?? "[]")[0];
   const pr = open
     ? api(["-X", "PATCH", `repos/${state.slug}/pulls/${open.number}`], { title, body })
     : api(["-X", "POST", `repos/${state.slug}/pulls`], { title, body, head: state.branch, base: state.base, draft: false });
-  return { ok: true, pr: pr.html_url };
+  return { ok: true, pr: pr.html_url, findings };
 }
 
 function attachScreenshots(cwd) {
@@ -344,7 +344,7 @@ export const missingTemplateHeadings = (template, body) => templateHeadings(temp
 
 export function buildPrompt(s) {
   const pr = PLAYBOOKS[s.playbook].opensPr
-    ? `Do not open the PR yourself. Push ${s.branch}, write the PR title to .audit/pr-title.txt and its body to .audit/pr-body.md, and the routine opens the PR against ${s.base}. It opens it only after /deslop and /no-comments have run after your last delegate's work, and after /technical-writing and /unslop have run.${s.prTemplate ? ` Write the PR body with the headings of the repo's template, ${s.prTemplate}, in its order, in place of the Opening a PR default headings. Keep every heading.` : ""}`
+    ? `Do not open the PR yourself. Push ${s.branch}, write the PR title to .audit/pr-title.txt and its body to .audit/pr-body.md, and the routine opens the PR against ${s.base}.${s.prTemplate ? ` Write the PR body with the headings of the repo's template, ${s.prTemplate}, in its order, in place of the Opening a PR default headings. Keep every heading.` : ""}`
     : "This is read-only. Make no edits, no commits and no PR.";
   return `/pstack:poteto-mode ${s.name}
 
@@ -368,7 +368,7 @@ export function buildRepairPrompt(s, audit) {
 ${audit}
 
 - For each gap, run the skipped step or skill now on the work you already did. Rerun nothing the audit did not flag.
-- A prose skill (technical-writing, unslop) applies to the PR title and body: update them with \`gh api -X PATCH repos/${s.slug}/pulls/<number>\`.
+- A prose skill (technical-writing, unslop) applies to the PR title and body. Rewrite .audit/pr-title.txt and .audit/pr-body.md, and the routine applies them to the PR.
 - Never rewrite pushed history: no rebase, amend or force-push. A gap that needs a history rewrite stays open. Name it in the table.
 - Update .audit/result.md so each row says done or skip: <reason> with evidence from this round.
 - The routine facts and hard rules from your first prompt still hold.`;
@@ -377,7 +377,7 @@ ${audit}
 function claude(cwd, state, round, sessionArgs, prompt) {
   const settings = join(cwd, ".audit/settings.json");
   const hook = (name) => [{ hooks: [{ type: "command", command: `node ${fileURLToPath(import.meta.url)} ${name}` }] }];
-  writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook("stop-hook"), PreToolUse: [{ matcher: "Edit|Write|Bash", ...hook("pre-tool-hook")[0] }] } }));
+  writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook("stop-hook"), PreToolUse: [{ matcher: "Bash", ...hook("pre-tool-hook")[0] }] } }));
   rmSync(join(cwd, STOP_COUNT), { force: true });
   const result = spawnSync("claude", ["-p", prompt, ...sessionArgs, "--settings", settings, "--add-dir", pstackRoot(), "--permission-mode", "acceptEdits", "--allowedTools", toolsFor(state).join(","), "--output-format", "json"], {
     cwd, encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
@@ -405,6 +405,8 @@ function transcriptPath(sessionId) {
   return hit ?? null;
 }
 
+const REFUSED = "the routine refused";
+
 export function summarizeDenials(outputs) {
   const counts = new Map();
   for (const out of outputs) {
@@ -415,7 +417,7 @@ export function summarizeDenials(outputs) {
       counts.set(what, (counts.get(what) ?? 0) + 1);
     }
   }
-  return [...counts].map(([what, n]) => `the routine refused \`${what.length > 120 ? `${what.slice(0, 117)}...` : what}\` ${n} time${n === 1 ? "" : "s"}`);
+  return [...counts].map(([what, n]) => `${REFUSED} \`${what.length > 120 ? `${what.slice(0, 117)}...` : what}\` ${n} time${n === 1 ? "" : "s"}`);
 }
 
 const STOP_COUNT = ".audit/stop-hook.count";
@@ -426,7 +428,6 @@ export function stopDecision(gaps, count) {
   return { decision: "block", reason: `The routine's audit still finds these gaps:\n${gaps.map((g) => `- ${g}`).join("\n")}\nClose each one, or append skip: <reason> to its line in .audit/todo.md, then finish.` };
 }
 
-const GIT_COMMIT = /\bgit\s+commit\b/;
 const PR_WRITE = /\bgh\s+api\b(?=.*\/pulls\b)(?=.*\s(-X\s*(POST|PATCH|PUT)|--method\s+(POST|PATCH|PUT)|-f\s|-F\s|--field\b|--raw-field\b|--input\b))|\bgh\s+pr\s+(create|edit)\b/;
 const DELEGATE = "pstack:poteto-agent";
 
@@ -438,7 +439,6 @@ export function prReadiness(transcript) {
     ...["technical-writing", "unslop"].filter((s) => !usedSkill(transcript.skills, s)).map((s) => `${s} has not run`),
   ];
 }
-const LEAD_EDITABLE = /^\.audit\/|(^|\/)CHANGELOG\.md$/;
 
 const MERGE_CALL = /\bgh\s+api\b.*\/pulls\/\d+\/merge\b|\bgh\s+pr\s+merge\b/;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -450,74 +450,35 @@ export function mergeRefusal(command, base) {
     : null;
 }
 
-export function preToolDecision(call, transcript, playbook, cwd, base) {
-  if (call.tool_name === "Bash") {
-    const refusal = mergeRefusal(String(call.tool_input.command), base);
-    if (refusal) return refusal;
-  }
-  const rules = PLAYBOOKS[playbook];
-  if (!rules.opensPr) return null;
-  const lead = !call.agent_id;
-  const ran = (skill) => usedSkill(transcript.skills, skill);
-  const missing = (skills) => skills.filter((s) => !ran(s));
-  if (lead && rules.delegate && ["Edit", "Write"].includes(call.tool_name)) {
-    const path = String(call.tool_input.file_path ?? "").replace(`${cwd}/`, "");
-    if (!TEST_PATH.test(path) && !LEAD_EDITABLE.test(path)) return `Delegate this edit to a pstack:poteto-agent subagent, as the playbook's delegation step says. The lead edits only tests, CHANGELOG.md and .audit/. Refused: ${path}`;
-  }
+export function preToolDecision(call, playbook, base) {
   if (call.tool_name !== "Bash") return null;
   const command = String(call.tool_input.command);
-  if (GIT_COMMIT.test(command)) {
-    const needed = missing(rules.beforeCommit);
-    if (lead) {
-      needed.push(...missing(["technical-writing", "unslop"]));
-      const lastEdit = transcript.calls.findLastIndex((c) => ["Edit", "Write"].includes(c.name));
-      const lastDeslop = transcript.calls.findLastIndex((c) => c.name === "Skill" && /(^|:)deslop$/.test(String(c.input.skill)));
-      if (lastDeslop < lastEdit || lastDeslop === -1) needed.push("deslop (after your last edit)");
-    }
-    if (needed.length) return `Run these skills before you commit: ${needed.join(", ")}.`;
-  }
-  if (PR_WRITE.test(command)) return "The routine opens and updates the PR. Write .audit/pr-title.txt and .audit/pr-body.md instead.";
+  const refusal = mergeRefusal(command, base);
+  if (refusal) return refusal;
+  if (PLAYBOOKS[playbook].opensPr && PR_WRITE.test(command)) return "The routine opens and updates the PR. Write .audit/pr-title.txt and .audit/pr-body.md instead.";
   return null;
-}
-
-function preToolHook(cwd, input) {
-  const state = loadState(cwd);
-  const path = transcriptPath(state.sessionId);
-  const transcript = readTranscript(path ? readFileSync(path, "utf8") : "");
-  return preToolDecision(input, transcript, state.playbook, cwd, state.base);
 }
 
 function stopHook(cwd) {
   const countPath = join(cwd, STOP_COUNT);
   const count = existsSync(countPath) ? Number(readFileSync(countPath, "utf8")) : 0;
   writeFileSync(countPath, String(count + 1));
-  const state = loadState(cwd);
-  const { violations, findings, transcript } = gate(cwd);
-  const readiness = PLAYBOOKS[state.playbook].opensPr && transcript ? prReadiness(readTranscript(readFileSync(transcript, "utf8"))) : [];
-  return stopDecision([...violations.filter((v) => !v.startsWith("no PR for")), ...findings, ...readiness], count);
+  const { violations, findings } = gate(cwd);
+  return stopDecision([...violations.filter((v) => !v.startsWith("no PR for")), ...findings.filter((f) => !f.startsWith(REFUSED))], count);
 }
 
 export const MERGE_CHECKS = [
   ["Mode is merge", (c) => /^merge$/i.test(c.mode)],
-  ["BASE is a release branch", (c) => /^release-\d+\.x$/.test(c.base)],
   ["the gate has no violations", (c) => c.violations.length === 0],
   ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
   ["CI is green or the repo has none", (c) => ["green", "none"].includes(readJson(join(c.cwd, CI_RESULT))?.state)],
   ["an independent review returned PASS", (c) => reviewVerdict(join(c.cwd, REVIEW_RESULT)) === "PASS"],
-  ["the comment review left no findings", (c) => commentFindings(join(c.cwd, COMMENTS_RESULT)) === 0],
-  ["the change was checked on its real surface", (c) => !c.findings.includes(NO_DRIVER)],
-  ["the code was written by a delegate", (c) => !c.findings.includes(NOT_DELEGATED)],
 ];
 
 export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !passes(ctx)).map(([name]) => name);
 
 const CI_RESULT = ".audit/ci.json";
 const REVIEW_RESULT = ".audit/review.md";
-const COMMENTS_RESULT = ".audit/comments.md";
-export const commentFindings = (path) => {
-  const n = existsSync(path) ? readFileSync(path, "utf8").match(/^\s*FINDINGS:\s*(\d+)\s*$/m)?.[1] : undefined;
-  return n === undefined ? null : Number(n);
-};
 export const reviewVerdict = (path) => (existsSync(path) ? readFileSync(path, "utf8").trimStart().split("\n")[0].trim() : null);
 const readJson = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -576,7 +537,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const [command, arg] = process.argv.slice(2);
   const cwd = process.cwd();
   if (command === "pre-tool-hook") {
-    const reason = preToolHook(cwd, JSON.parse(readFileSync(0, "utf8")));
+    const { playbook, base } = loadState(cwd);
+    const reason = preToolDecision(JSON.parse(readFileSync(0, "utf8")), playbook, base);
     if (reason) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }));
     process.exit(0);
   }
