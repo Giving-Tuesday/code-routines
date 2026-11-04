@@ -69,11 +69,12 @@ async def screenshot(docs, out_dir: Path, stem: str, chromium: str | None) -> li
             await page.wait_for_timeout(1500)
             path = out_dir / f"{stem}-{n}.png"
             await page.screenshot(path=path, full_page=True)
-            print(path)
-            if errors:
-                problems.append(f"chart {n}: page error: {errors[0]}")
             if not await page.locator("section canvas, section svg").count():
-                problems.append(f"chart {n}: the embed rendered nothing (bundle not loaded?)")
+                errors.append("the embed rendered nothing (bundle not loaded?)")
+            if errors:
+                problems.append(f"chart {n} failed, screenshot {path}: {errors[0]}")
+            else:
+                print(path)
         await browser.close()
     return problems
 
