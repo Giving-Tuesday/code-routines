@@ -4,10 +4,19 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, readFileSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditGit, auditResult, ignoreAudit, transcriptPath, prBodyFindings, browserFact, buildPrompt, checkoutWorkBranch, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { auditGit, auditResult, auditTranscript, prBodyFindings, prReadiness, unreleasedSection, NO_DRIVER, NOT_DELEGATED } from "./lib/audit.mjs";
+import { findPrTemplate, missingTemplateHeadings, repoSlug } from "./lib/github.mjs";
+import { mergeRefusal, preToolDecision, stopDecision } from "./lib/hooks.mjs";
+import { ciState, failedMergeChecks, reviewVerdict } from "./lib/merge.mjs";
+import { allowedTools, playbookStepsFor, pstackPlaybooks, pstackRoot, seedTodo, TOOLCHAINS } from "./lib/playbooks.mjs";
+import { shrinkScreenshot, withScreenshots } from "./lib/pr.mjs";
+import { checkoutWorkBranch, ignoreAudit } from "./lib/prepare.mjs";
+import { browserFact, buildPrompt, buildRepairPrompt } from "./lib/session.mjs";
+import { baseFor, parseTicket, playbookFor } from "./lib/ticket.mjs";
+import { readTranscript, summarizeDenials, transcriptPath } from "./lib/transcript.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
-const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
+const steps = playbookStepsFor("bug-fix");
 
 let n = 0;
 const line = (type, content) => JSON.stringify({ type, isSidechain: false, message: { content } });
