@@ -25,7 +25,7 @@ If you cannot read the repo, stop and tell the user the skill needs access to Gi
 When the embed has no series type for the chart, combine series that each draw part of the shape. These rules hold for gt-embed 2.0.0-beta.4:
 
 - The embed drops `markLine` and `markArea`. Draw a reference line as a two-point `line` series, and set `"symbolSize": 0` so its ends don't read as data points.
-- The embed shows a legend when a chart has two or more series, not counting error bars, and lists every series that has a `name`. Name every series that carries data a reader must tell apart, such as the two dots of a dumbbell. Name a reference line with its caption, such as "All donors: 37%", so the legend carries the caption and no label has to fit beside the line. Leave only the helpers that draw a shape, such as an offset bar, unnamed.
+- The embed shows a legend when a chart has two or more series, not counting error bars, and lists every series that has a `name`. Name every series that carries data a reader must tell apart, such as the two dots of a dumbbell. Name a reference line with its caption exactly as the image prints it, such as "All donors: 37%", so the legend carries the caption and no label has to fit beside the line. Don't invent a name the image doesn't show, for example for a chart's only data series. Leave only the helpers that draw a shape, such as an offset bar, unnamed.
 - The embed prints a value label inside every stacked bar. Set `"label": {"show": False}` on a helper bar, such as a transparent offset bar.
 - A `custom` series draws only the shape its `renderItem` names, `"errorBar"` or `"barRange"`.
 
@@ -52,7 +52,7 @@ When the embed has no series type for the chart, combine series that each draw p
    ```
 
    Put the image's title, subtitle, and notes in the `title`, `subtitle`, and `description` keywords, never in `option.title`. If the image has one long title, put the figure name in `title` and the rest in `subtitle`.
-4. Render the notebook with `render.py` in this skill's directory, using the gt-charts version the user's Databricks runs. If the user doesn't know it, use the newest `v2` tag, a beta included. `git ls-remote --tags --sort=-v:refname https://github.com/Giving-Tuesday/gt-charts 'v2*'` lists it first.
+4. Render the notebook with `render.py` in this skill's directory, using the gt-charts version the user's Databricks runs. If the user doesn't know it, use the newest `v2` tag, a beta included. `git -c versionsort.suffix=b ls-remote --tags --sort=-v:refname https://github.com/Giving-Tuesday/gt-charts 'v2*'` lists it first.
 
    ```bash
    uv run --with "gt-charts[export] @ git+https://github.com/Giving-Tuesday/gt-charts.git@<tag>" python <skill-dir>/render.py <notebook.py> --out-dir <tmp-dir>
