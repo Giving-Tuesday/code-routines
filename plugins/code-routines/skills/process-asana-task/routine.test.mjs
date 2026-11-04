@@ -50,7 +50,18 @@ test("compliant transcript passes", () => {
 
 test("observed failure is blocked on every skipped step", () => {
   const problems = auditTranscript(readTranscript(observedFailure), { playbook: "bug-fix", steps, projectPlaybooks: true });
-  for (const want of ["todolist lacks bug-fix step 1", "deslop has not run", "no-comments has not run", "technical-writing has not run", "skill how never ran", "no driver skill", "not delegated", "check-playbooks.mjs never ran", "skill why neither ran"]) {
+  const wants = [
+    "todolist lacks bug-fix step 1",
+    "deslop has not run",
+    "no-comments has not run",
+    "technical-writing has not run",
+    "skill how never ran",
+    "no driver skill",
+    "not delegated",
+    "check-playbooks.mjs never ran",
+    "skill why neither ran",
+  ];
+  for (const want of wants) {
     assert.ok(problems.some((p) => p.includes(want)), `missing: ${want}\n${problems.join("\n")}`);
   }
 });
@@ -187,7 +198,14 @@ test("the PreToolUse hook refuses only merges, trunk pushes and PR writes", () =
     assert.match(preToolDecision(bash("git push origin HEAD:release-1.x"), playbook, "release-1.x"), /routine merges/);
     assert.match(preToolDecision(bash("gh pr merge 3"), playbook, "release-1.x"), /routine merges/);
   }
-  for (const command of ["gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x", "gh api repos/o/r/pulls --input pr.json", "gh api -X PATCH repos/o/r/pulls/3 -f body=x", "gh api --method POST repos/o/r/pulls", "gh pr create --fill"]) {
+  const prWrites = [
+    "gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x",
+    "gh api repos/o/r/pulls --input pr.json",
+    "gh api -X PATCH repos/o/r/pulls/3 -f body=x",
+    "gh api --method POST repos/o/r/pulls",
+    "gh pr create --fill",
+  ];
+  for (const command of prWrites) {
     for (const agent_id of [undefined, "a1"]) assert.match(preToolDecision(bash(command, agent_id), "bug-fix", "release-1.x"), /routine opens and updates the PR/, command);
   }
   assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), "bug-fix", "release-1.x"), null);
@@ -214,7 +232,20 @@ test("the repo's PR template is found and its headings are checked in the PR bod
   assert.deepEqual(missingTemplateHeadings(template, "## Summary\nFixes it.\n## Test plan\nRan it.\n### Screenshots\nnone\n"), []);
   assert.deepEqual(missingTemplateHeadings(template, "## Why\nFixes it.\n## Test plan\n"), ["Summary", "Screenshots"]);
   assert.deepEqual(missingTemplateHeadings(template, null), ["Summary", "Test plan", "Screenshots"]);
-  const prompt = buildPrompt({ playbook: "bug-fix", base: "release-1.x", slug: "o/r", branch: "b", toolchains: [], prTemplate: ".github/pull_request_template.md", name: "n", text: "t", url: "u", repo: "r", mode: "pr", fixTarget: "f" });
+  const prompt = buildPrompt({
+    playbook: "bug-fix",
+    base: "release-1.x",
+    slug: "o/r",
+    branch: "b",
+    toolchains: [],
+    prTemplate: ".github/pull_request_template.md",
+    name: "n",
+    text: "t",
+    url: "u",
+    repo: "r",
+    mode: "pr",
+    fixTarget: "f",
+  });
   assert.match(prompt, /headings of the repo's template, \.github\/pull_request_template\.md/);
   assert.match(prompt, /mkdir, echo, printf, cd, pwd, wc, sort, uniq, diff, test, jq, cp, mv, touch\./);
 });
@@ -308,7 +339,10 @@ test("the PR is ready only when deslop and no-comments ran after the last delega
   const delegate = ["Agent", { subagent_type: "pstack:poteto-agent", prompt: "fix" }];
   const sicko = ["Agent", { subagent_type: "pstack:comment-sicko", prompt: "review" }];
   assert.deepEqual(prReadiness(seq(delegate, skill("pstack:deslop"), skill("no-comments"), sicko, skill("technical-writing"), skill("unslop"))), []);
-  assert.deepEqual(prReadiness(seq(skill("deslop"), skill("no-comments"), delegate, skill("technical-writing"), skill("unslop"))), ["deslop has not run after the last delegate's work", "no-comments has not run after the last delegate's work"]);
+  assert.deepEqual(prReadiness(seq(skill("deslop"), skill("no-comments"), delegate, skill("technical-writing"), skill("unslop"))), [
+    "deslop has not run after the last delegate's work",
+    "no-comments has not run after the last delegate's work",
+  ]);
   assert.deepEqual(prReadiness(seq(delegate, skill("deslop"), skill("no-comments"))), ["technical-writing has not run", "unslop has not run"]);
 });
 
@@ -408,7 +442,11 @@ test("env files are forbidden at any depth and CI dirs only at the root", () => 
   git(work, "commit", "-qm", "work");
   const state = { baseSha: base, base: "release-2.x", branch: "claude/t", playbook: "feature", slug: "none/none" };
   const { violations } = auditGit(state, work);
-  assert.deepEqual(violations.filter((v) => v.startsWith("touches")), ["touches CI config or secrets: .circleci/c.yml", "touches CI config or secrets: apps/web/.env", "touches CI config or secrets: apps/web/.env.local"]);
+  assert.deepEqual(violations.filter((v) => v.startsWith("touches")), [
+    "touches CI config or secrets: .circleci/c.yml",
+    "touches CI config or secrets: apps/web/.env",
+    "touches CI config or secrets: apps/web/.env.local",
+  ]);
 });
 
 test("a compliance row passes only when its third cell starts with done or skip:", () => {
