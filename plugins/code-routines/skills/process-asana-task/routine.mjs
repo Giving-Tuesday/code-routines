@@ -494,6 +494,7 @@ export const MERGE_CHECKS = [
   ["the PR is open against BASE", (c) => c.pr?.state === "open" && c.pr.base === c.base],
   ["CI is green or the repo has none", (c) => ["green", "none"].includes(readJson(join(c.cwd, CI_RESULT))?.state)],
   ["an independent review returned PASS", (c) => reviewVerdict(join(c.cwd, REVIEW_RESULT)) === "PASS"],
+  ["the comment review left no findings", (c) => commentFindings(join(c.cwd, COMMENTS_RESULT)) === 0],
   ["the change was checked on its real surface", (c) => !c.findings.includes(NO_DRIVER)],
   ["the code was written by a delegate", (c) => !c.findings.includes(NOT_DELEGATED)],
 ];
@@ -502,6 +503,11 @@ export const failedMergeChecks = (ctx) => MERGE_CHECKS.filter(([, passes]) => !p
 
 const CI_RESULT = ".audit/ci.json";
 const REVIEW_RESULT = ".audit/review.md";
+const COMMENTS_RESULT = ".audit/comments.md";
+export const commentFindings = (path) => {
+  const n = existsSync(path) ? readFileSync(path, "utf8").match(/^\s*FINDINGS:\s*(\d+)\s*$/m)?.[1] : undefined;
+  return n === undefined ? null : Number(n);
+};
 export const reviewVerdict = (path) => (existsSync(path) ? readFileSync(path, "utf8").trimStart().split("\n")[0].trim() : null);
 const readJson = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

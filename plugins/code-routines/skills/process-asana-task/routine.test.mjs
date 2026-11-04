@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, commentFindings, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
@@ -128,6 +128,7 @@ test("merge checks pass only for a clean merge-mode run against a release branch
   mkdirSync(join(ci, ".audit"));
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   writeFileSync(join(ci, ".audit/review.md"), "PASS\n\nNo high or critical findings.\n");
+  writeFileSync(join(ci, ".audit/comments.md"), "FINDINGS: 0\n");
   const clean = { cwd: ci, mode: "merge", base: "release-2.x", violations: [], findings: ["skill how never ran"], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks(clean), []);
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "red" }));
@@ -157,6 +158,7 @@ test("order findings never block a merge, but outcome findings do", () => {
   mkdirSync(join(dir, ".audit"));
   writeFileSync(join(dir, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   writeFileSync(join(dir, ".audit/review.md"), "PASS\n");
+  writeFileSync(join(dir, ".audit/comments.md"), "FINDINGS: 0\n");
   const ctx = { cwd: dir, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks({ ...ctx, findings: ["skill how never ran", "todolist step 3 is pending, not completed"] }), []);
   assert.deepEqual(failedMergeChecks({ ...ctx, findings: [NO_DRIVER, NOT_DELEGATED] }), ["the change was checked on its real surface", "the code was written by a delegate"]);
@@ -249,4 +251,16 @@ test("the PR is ready only when deslop and no-comments ran after the last delega
   assert.deepEqual(prReadiness(seq(delegate, skill("pstack:deslop"), skill("no-comments"), sicko, skill("technical-writing"), skill("unslop"))), []);
   assert.deepEqual(prReadiness(seq(skill("deslop"), skill("no-comments"), delegate, skill("technical-writing"), skill("unslop"))), ["deslop has not run after the last delegate's work", "no-comments has not run after the last delegate's work"]);
   assert.deepEqual(prReadiness(seq(delegate, skill("deslop"), skill("no-comments"))), ["technical-writing has not run", "unslop has not run"]);
+});
+
+test("the comment review blocks a merge until no findings remain", () => {
+  const dir = mkdtempSync(join(tmpdir(), "comments-"));
+  const path = join(dir, "comments.md");
+  assert.equal(commentFindings(path), null);
+  writeFileSync(path, "FINDINGS: 2\n- src/a.ts:3 restates the code\n");
+  assert.equal(commentFindings(path), 2);
+  writeFileSync(path, "FINDINGS: 0\n");
+  assert.equal(commentFindings(path), 0);
+  writeFileSync(path, "No findings.\n");
+  assert.equal(commentFindings(path), null);
 });
