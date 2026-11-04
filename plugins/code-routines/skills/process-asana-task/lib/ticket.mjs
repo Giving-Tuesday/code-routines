@@ -20,5 +20,6 @@ export function parseTicket(ticket) {
   if (!playbook) return { error: `unknown Type "${ticket.fields.Type}"` };
   const base = baseFor(ticket.fields["Release version"]);
   if (!base) return { error: `Release version "${ticket.fields["Release version"]}" has no major number` };
-  return { playbook, base };
+  const { gid, url, name, text, fields } = ticket;
+  return { gid, url, name, text, mode: fields.Mode, repo: fields.Repo, fixTarget: fields["Fix target"], playbook, base };
 }

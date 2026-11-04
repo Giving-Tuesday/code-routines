@@ -4,11 +4,33 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { PLAYBOOKS, pstackRoot, toolsFor } from "./playbooks.mjs";
-import { SETTINGS, STOP_COUNT, claudeOutput, claudeOutputs, loadState, saveState } from "./state.mjs";
+import { opensPr, pstackRoot } from "./playbooks.mjs";
+import { AUDIT_DIR, PR_BODY, PR_TITLE, RESULT, SETTINGS, STOP_COUNT, TODO, claudeOutput, claudeOutputs, loadState, saveState } from "./state.mjs";
 import { transcriptPath } from "./transcript.mjs";
 
 const ROUTINE = fileURLToPath(new URL("../routine.mjs", import.meta.url));
+
+const BASE_TOOLS = [
+  "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch",
+  "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop",
+  "Bash(git:*)", "Bash(node:*)", "Bash(gh api:*)",
+  "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)",
+  "Bash(find:*)", "Bash(sed:*)", "Bash(mkdir:*)", "Bash(echo:*)", "Bash(printf:*)", "Bash(cd:*)",
+  "Bash(pwd)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(diff:*)", "Bash(test:*)",
+  "Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)",
+];
+
+export const TOOLCHAINS = [
+  { lock: "uv.lock", install: ["uv", ["sync", "--frozen"]], tools: ["uv", "uvx", "python", "python3", "pytest"] },
+  { lock: "pnpm-lock.yaml", install: ["pnpm", ["install", "--frozen-lockfile"]], tools: ["pnpm", "npx"] },
+  { lock: "yarn.lock", install: ["yarn", ["install", "--frozen-lockfile"]], tools: ["yarn", "npx"] },
+  { lock: "package-lock.json", install: ["npm", ["ci"]], tools: ["npm", "npx"] },
+];
+
+export function toolsFor({ toolchains }) {
+  const shellTools = TOOLCHAINS.filter((t) => toolchains.includes(t.lock)).flatMap((t) => t.tools);
+  return [...new Set([...BASE_TOOLS, ...shellTools.map((tool) => `Bash(${tool}:*)`)])];
+}
 
 const sentences = (...parts) => parts.join(" ");
 
@@ -17,17 +39,17 @@ export function browserFact(env) {
   return `\n- ${sentences(
     'For a browser check, write a Node script that uses `require("playwright")` and `chromium.launch()` with no options,',
     "run it as plain `node <script>` with no environment prefix, since require resolves playwright from any directory,",
-    "and save each screenshot as .audit/<what-it-shows>.png.",
-    "The routine adds every .audit/*.png to the PR description, so save only screenshots a reviewer should see.",
+    `and save each screenshot as ${AUDIT_DIR}/<what-it-shows>.png.`,
+    `The routine adds every ${AUDIT_DIR}/*.png to the PR description, so save only screenshots a reviewer should see.`,
     `Chromium is installed under ${env.PLAYWRIGHT_BROWSERS_PATH}.`,
     "google-chrome is not installed, and npx playwright install is not needed.",
   )}`;
 }
 
 function prRule(s) {
-  if (!PLAYBOOKS[s.playbook].opensPr) return "This is read-only. Make no edits, no commits and no PR.";
+  if (!opensPr(s.playbook)) return "This is read-only. Make no edits, no commits and no PR.";
   return sentences(
-    `Do not open the PR yourself. Push ${s.branch}, write the PR title to .audit/pr-title.txt and its body to .audit/pr-body.md,`,
+    `Do not open the PR yourself. Push ${s.branch}, write the PR title to ${PR_TITLE} and its body to ${PR_BODY},`,
     `and the routine opens the PR against ${s.base}.`,
     ...(s.prTemplate
       ? [
@@ -69,11 +91,11 @@ export function buildPrompt(s) {
       `If the playbook needs a command outside this list, record skip: <reason> naming the command.${browserFact(process.env)}`,
     ),
     sentences(
-      "- Your todolist is .audit/todo.md. It already holds the playbook steps verbatim.",
+      `- Your todolist is ${TODO}. It already holds the playbook steps verbatim.`,
       "Tick each line `- [x]` when done, or append `skip: <reason>`. You may mirror it with TaskCreate.",
     ),
     sentences(
-      `- Before your final reply, write .audit/result.md. It opens with a "## Playbook compliance" table`,
+      `- Before your final reply, write ${RESULT}. It opens with a "## Playbook compliance" table`,
       `with one row per ${s.playbook} playbook step: \`| <n> | <step> | done or skip: <reason> | <evidence> |\`.`,
       "The rest is your final reply.",
     ),
@@ -96,13 +118,13 @@ export function buildRepairPrompt(s, audit) {
     "- For each gap, run the skipped step or skill now on the work you already did. Rerun nothing the audit did not flag.",
     sentences(
       "- A prose skill (technical-writing, unslop) applies to the PR title and body.",
-      "Rewrite .audit/pr-title.txt and .audit/pr-body.md, and the routine applies them to the PR.",
+      `Rewrite ${PR_TITLE} and ${PR_BODY}, and the routine applies them to the PR.`,
     ),
     sentences(
       "- Never rewrite pushed history: no rebase, amend or force-push.",
       "A gap that needs a history rewrite stays open. Name it in the table.",
     ),
-    "- Update .audit/result.md so each row says done or skip: <reason> with evidence from this round.",
+    `- Update ${RESULT} so each row says done or skip: <reason> with evidence from this round.`,
     "- The routine facts and hard rules from your first prompt still hold.",
   ].join("\n");
 }

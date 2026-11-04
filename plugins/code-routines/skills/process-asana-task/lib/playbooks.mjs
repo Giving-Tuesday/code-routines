@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
+import { configDir } from "./shell.mjs";
+import { PR_BODY, PR_TITLE } from "./state.mjs";
 
 export const PLAYBOOKS = {
   "bug-fix": { opensPr: true, driver: true, delegate: true, skills: ["how"], skippable: ["why", "tdd"] },
@@ -9,31 +10,7 @@ export const PLAYBOOKS = {
   investigation: { opensPr: false, driver: false, delegate: false, skills: ["how", "unslop"], skippable: ["why"] },
 };
 
-const BASE_TOOLS = [
-  "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch",
-  "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop",
-  "Bash(git:*)", "Bash(node:*)", "Bash(gh api:*)",
-  "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)",
-  "Bash(find:*)", "Bash(sed:*)", "Bash(mkdir:*)", "Bash(echo:*)", "Bash(printf:*)", "Bash(cd:*)",
-  "Bash(pwd)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(diff:*)", "Bash(test:*)",
-  "Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)",
-];
-
-export const TOOLCHAINS = [
-  { lock: "uv.lock", install: ["uv", ["sync", "--frozen"]], tools: ["uv", "uvx", "python", "python3", "pytest"] },
-  { lock: "pnpm-lock.yaml", install: ["pnpm", ["install", "--frozen-lockfile"]], tools: ["pnpm", "npx"] },
-  { lock: "yarn.lock", install: ["yarn", ["install", "--frozen-lockfile"]], tools: ["yarn", "npx"] },
-  { lock: "package-lock.json", install: ["npm", ["ci"]], tools: ["npm", "npx"] },
-];
-
-export function allowedTools(toolchains) {
-  const shellTools = toolchains.flatMap((t) => t.tools.map((tool) => `Bash(${tool}:*)`));
-  return [...new Set([...BASE_TOOLS, ...shellTools])];
-}
-
-export const toolsFor = (state) => allowedTools(TOOLCHAINS.filter((t) => state.toolchains.includes(t.lock)));
-
-export const configDir = () => process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+export const opensPr = (playbook) => PLAYBOOKS[playbook].opensPr;
 
 export function pstackPlaybooks() {
   if (process.env.PSTACK_POTETO_DIR) return join(process.env.PSTACK_POTETO_DIR, "playbooks");
@@ -62,11 +39,11 @@ const OPENING_A_PR = [
   "Opening a PR: run /deslop over the diff before commit",
   "Opening a PR: run /no-comments before review",
   "Opening a PR: run /technical-writing, then /unslop, on commit bodies and the PR title and body",
-  "Opening a PR: write the PR title to .audit/pr-title.txt and the body to .audit/pr-body.md",
+  `Opening a PR: write the PR title to ${PR_TITLE} and the body to ${PR_BODY}`,
 ];
 
 export function seedTodo(playbook, steps) {
-  const opening = PLAYBOOKS[playbook].opensPr ? OPENING_A_PR : [];
+  const opening = opensPr(playbook) ? OPENING_A_PR : [];
   return [
     `# ${playbook} todolist`,
     "",

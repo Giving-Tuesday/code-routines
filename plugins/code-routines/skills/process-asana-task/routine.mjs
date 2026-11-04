@@ -3,8 +3,9 @@ import process from "node:process";
 import { gate } from "./lib/audit.mjs";
 import { preToolHook, stopHook } from "./lib/hooks.mjs";
 import { awaitCi, mergeCheck } from "./lib/merge.mjs";
-import { attachScreenshots, openPr } from "./lib/pr.mjs";
+import { openPr } from "./lib/pr.mjs";
 import { prepare } from "./lib/prepare.mjs";
+import { attachScreenshots } from "./lib/screenshots.mjs";
 import { repair, run } from "./lib/session.mjs";
 
 const USAGE =

@@ -1,7 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gate } from "./audit.mjs";
-import { readIfExists, readJson, sh, trySh } from "./shell.mjs";
+import { ghGet, head as headSha } from "./github.mjs";
+import { readIfExists, readJson } from "./shell.mjs";
 import { CI_RESULT, REVIEW_RESULT, loadState } from "./state.mjs";
 
 export const reviewVerdict = (path) => readIfExists(path)?.trimStart().split("\n")[0].trim() ?? null;
@@ -25,30 +26,29 @@ export function ciState(runs) {
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-export function awaitCi(cwd, { timeoutMs = 30 * 60_000, noneAfterMs = 5 * 60_000, pollMs = 30_000 } = {}) {
-  const { slug } = loadState(cwd);
-  const head = sh("git", ["rev-parse", "HEAD"], cwd);
+function pollCi(cwd, slug, head, { timeoutMs = 30 * 60_000, noneAfterMs = 5 * 60_000, pollMs = 30_000 }) {
   const start = Date.now();
-  let result;
   for (;;) {
-    const checks = JSON.parse(trySh("gh", ["api", `repos/${slug}/commits/${head}/check-runs?per_page=100`], cwd) ?? "{}");
-    result = ciState(checks.check_runs ?? []);
+    const result = ciState(ghGet(cwd, `repos/${slug}/commits/${head}/check-runs?per_page=100`)?.check_runs ?? []);
     const waited = Date.now() - start;
-    if (result.state === "green" || result.state === "red") break;
-    if (result.state === "none" && waited >= noneAfterMs) break;
-    if (waited >= timeoutMs) {
-      result = { state: "timeout", failed: [] };
-      break;
-    }
+    if (result.state === "green" || result.state === "red") return result;
+    if (result.state === "none" && waited >= noneAfterMs) return result;
+    if (waited >= timeoutMs) return { state: "timeout", failed: [] };
     sleep(pollMs);
   }
+}
+
+export function awaitCi(cwd, timing = {}) {
+  const { slug } = loadState(cwd);
+  const head = headSha(cwd);
+  const result = pollCi(cwd, slug, head, timing);
   writeFileSync(join(cwd, CI_RESULT), JSON.stringify({ head, ...result }, null, 2));
   return { ok: result.state === "green" || result.state === "none", head, ...result };
 }
 
 export function mergeCheck(cwd) {
   const state = loadState(cwd);
-  const result = gate(cwd);
-  const failed = failedMergeChecks({ ...state, ...result, cwd });
-  return { ok: failed.length === 0, pr: result.pr, failed };
+  const { pr, violations } = gate(cwd);
+  const failed = failedMergeChecks({ ...state, pr, violations, cwd });
+  return { ok: failed.length === 0, pr, failed };
 }

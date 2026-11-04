@@ -6,14 +6,19 @@ export function repoSlug(remoteUrl) {
   return remoteUrl.replace(/\.git$/, "").split(/[/:]/).slice(-2).join("/");
 }
 
+export const ghGet = (cwd, path) => JSON.parse(trySh("gh", ["api", path], cwd) ?? "null");
+
+export const ghWrite = (cwd, method, path, body) =>
+  JSON.parse(sh("gh", ["api", "-X", method, path, "--input", "-"], cwd, { input: JSON.stringify(body) }));
+
+export const head = (cwd) => sh("git", ["rev-parse", "HEAD"], cwd);
+
 export function findPr(cwd, { slug, branch }, prState) {
-  const query = `repos/${slug}/pulls?state=${prState}&head=${slug.split("/")[0]}:${branch}`;
-  return JSON.parse(trySh("gh", ["api", query], cwd) ?? "[]")[0];
+  return ghGet(cwd, `repos/${slug}/pulls?state=${prState}&head=${slug.split("/")[0]}:${branch}`)?.[0];
 }
 
 export function branchPushed(cwd, branch) {
-  const remote = trySh("git", ["ls-remote", "origin", `refs/heads/${branch}`], cwd)?.split("\t")[0];
-  return remote === sh("git", ["rev-parse", "HEAD"], cwd);
+  return trySh("git", ["ls-remote", "origin", `refs/heads/${branch}`], cwd)?.split("\t")[0] === head(cwd);
 }
 
 const PR_TEMPLATES = [
