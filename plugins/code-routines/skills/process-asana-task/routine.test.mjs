@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, mergeRefusal, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
@@ -166,19 +166,19 @@ test("the PreToolUse hook enforces delegation and skill order", () => {
   const t = (...skills) => readTranscript([prompt, ...skills.flatMap((skill) => call("Skill", { skill }))].join("\n"));
   const edit = (path, agent_id) => ({ tool_name: "Edit", tool_input: { file_path: `/w/${path}` }, agent_id });
   const bash = (command, agent_id) => ({ tool_name: "Bash", tool_input: { command }, agent_id });
-  assert.match(preToolDecision(edit("src/tooltip.ts"), t(), "bug-fix", "/w"), /Delegate this edit/);
-  assert.equal(preToolDecision(edit("src/tooltip.ts", "a1"), t(), "bug-fix", "/w"), null);
-  assert.equal(preToolDecision(edit("tests/test_tooltip.py"), t(), "bug-fix", "/w"), null);
-  assert.equal(preToolDecision(edit("CHANGELOG.md"), t(), "bug-fix", "/w"), null);
-  assert.match(preToolDecision(bash("git commit -m x", "a1"), t(), "feature", "/w"), /how, architect/);
-  assert.equal(preToolDecision(bash("git commit -m x", "a1"), t("how", "architect"), "feature", "/w"), null);
-  assert.match(preToolDecision(bash("git add -A && git commit -m x"), t("how"), "bug-fix", "/w"), /technical-writing, unslop, deslop/);
-  assert.equal(preToolDecision(bash("git commit -m x"), t("how", "pstack:deslop", "technical-writing", "unslop"), "bug-fix", "/w"), null);
+  assert.match(preToolDecision(edit("src/tooltip.ts"), t(), "bug-fix", "/w", "release-1.x"), /Delegate this edit/);
+  assert.equal(preToolDecision(edit("src/tooltip.ts", "a1"), t(), "bug-fix", "/w", "release-1.x"), null);
+  assert.equal(preToolDecision(edit("tests/test_tooltip.py"), t(), "bug-fix", "/w", "release-1.x"), null);
+  assert.equal(preToolDecision(edit("CHANGELOG.md"), t(), "bug-fix", "/w", "release-1.x"), null);
+  assert.match(preToolDecision(bash("git commit -m x", "a1"), t(), "feature", "/w", "release-1.x"), /how, architect/);
+  assert.equal(preToolDecision(bash("git commit -m x", "a1"), t("how", "architect"), "feature", "/w", "release-1.x"), null);
+  assert.match(preToolDecision(bash("git add -A && git commit -m x"), t("how"), "bug-fix", "/w", "release-1.x"), /technical-writing, unslop, deslop/);
+  assert.equal(preToolDecision(bash("git commit -m x"), t("how", "pstack:deslop", "technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), null);
   const editAfterDeslop = readTranscript([prompt, ...["how", "deslop", "technical-writing", "unslop"].flatMap((skill) => call("Skill", { skill })), ...call("Edit", { file_path: "/w/tests/a.py" })].join("\n"));
-  assert.match(preToolDecision(bash("git commit -m x"), editAfterDeslop, "bug-fix", "/w"), /deslop \(after your last edit\)/);
-  assert.match(preToolDecision(bash("gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x"), t("technical-writing", "unslop"), "bug-fix", "/w"), /no-comments/);
-  assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), t(), "bug-fix", "/w"), null);
-  assert.equal(preToolDecision(edit("src/a.ts"), t(), "investigation", "/w"), null);
+  assert.match(preToolDecision(bash("git commit -m x"), editAfterDeslop, "bug-fix", "/w", "release-1.x"), /deslop \(after your last edit\)/);
+  assert.match(preToolDecision(bash("gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x"), t("technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), /no-comments/);
+  assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), t(), "bug-fix", "/w", "release-1.x"), null);
+  assert.equal(preToolDecision(edit("src/a.ts"), t(), "investigation", "/w", "release-1.x"), null);
 });
 
 test("the prompt names the Playwright browser only where one is installed", () => {
@@ -225,4 +225,16 @@ test("screenshots shrink to at most 1280 px wide before upload", { skip: !trySpa
   assert.notEqual(small, big);
   assert.equal(execFileSync("identify", ["-format", "%w", small], { encoding: "utf8" }), "1280");
   assert.ok(statSync(small).size < statSync(big).size);
+});
+
+test("the work session may not merge or push to trunk, lead or subagent, in any playbook", () => {
+  for (const command of ["gh api -X PUT repos/o/r/pulls/12/merge", "gh pr merge 12 --merge", "git push origin release-2.x", "git push origin HEAD:release-2.x", "git push -f origin HEAD:refs/heads/main", "git push origin main"]) {
+    assert.ok(mergeRefusal(command, "release-2.x"), command);
+    for (const agent_id of [undefined, "a1"]) {
+      assert.match(preToolDecision({ tool_name: "Bash", tool_input: { command }, agent_id }, readTranscript(prompt), "investigation", "/w", "release-2.x"), /routine merges/);
+    }
+  }
+  for (const command of ["git push -u origin claude/fix-tooltip", "gh api repos/o/r/pulls/12", "git push origin claude/release-2.x-fix", "gh api repos/o/r/pulls/12/merged-files"]) {
+    assert.equal(mergeRefusal(command, "release-2.x"), null, command);
+  }
 });

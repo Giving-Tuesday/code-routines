@@ -396,7 +396,21 @@ const GIT_COMMIT = /\bgit\s+commit\b/;
 const PR_CREATE = /\bgh\s+api\b.*\/pulls\b.*\s-[fF]\s+(head|base)=/;
 const LEAD_EDITABLE = /^\.audit\/|(^|\/)CHANGELOG\.md$/;
 
-export function preToolDecision(call, transcript, playbook, cwd) {
+const MERGE_CALL = /\bgh\s+api\b.*\/pulls\/\d+\/merge\b|\bgh\s+pr\s+merge\b/;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export function mergeRefusal(command, base) {
+  const pushToTrunk = new RegExp(`\\bgit\\s+push\\b[^;&|]*\\s(\\S*:)?(refs/heads/)?(${escapeRe(base)}|main|master)(\\s|$)`);
+  return MERGE_CALL.test(command) || pushToTrunk.test(command)
+    ? "Never merge or push to the base branch. The routine merges this PR after its own checks pass."
+    : null;
+}
+
+export function preToolDecision(call, transcript, playbook, cwd, base) {
+  if (call.tool_name === "Bash") {
+    const refusal = mergeRefusal(String(call.tool_input.command), base);
+    if (refusal) return refusal;
+  }
   const rules = PLAYBOOKS[playbook];
   if (!rules.opensPr) return null;
   const lead = !call.agent_id;
@@ -429,7 +443,7 @@ function preToolHook(cwd, input) {
   const state = loadState(cwd);
   const path = transcriptPath(state.sessionId);
   const transcript = readTranscript(path ? readFileSync(path, "utf8") : "");
-  return preToolDecision(input, transcript, state.playbook, cwd);
+  return preToolDecision(input, transcript, state.playbook, cwd, state.base);
 }
 
 function stopHook(cwd) {
