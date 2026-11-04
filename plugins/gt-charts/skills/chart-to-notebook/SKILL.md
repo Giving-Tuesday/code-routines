@@ -16,7 +16,7 @@ Read these from the `release-2.x` branch of Giving-Tuesday/gt-charts. The defaul
 Read:
 
 - `docs/using-gt-charts.md` for the API, the chart types, and "Building a chart the embed has no type for".
-- `notebooks/*.py` for the notebook format. Start from the example closest to the image.
+- `notebooks/*.py` for the notebook format. Start from the example closest to the image. Skip `notebooks/image.py`, which shows PNG export, not a chart.
 
 If you cannot read the repo, stop and tell the user the skill needs access to Giving-Tuesday/gt-charts.
 
