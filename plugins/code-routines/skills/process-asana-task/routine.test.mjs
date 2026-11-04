@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, mergeRefusal, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
@@ -176,7 +176,9 @@ test("the PreToolUse hook enforces delegation and skill order", () => {
   assert.equal(preToolDecision(bash("git commit -m x"), t("how", "pstack:deslop", "technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), null);
   const editAfterDeslop = readTranscript([prompt, ...["how", "deslop", "technical-writing", "unslop"].flatMap((skill) => call("Skill", { skill })), ...call("Edit", { file_path: "/w/tests/a.py" })].join("\n"));
   assert.match(preToolDecision(bash("git commit -m x"), editAfterDeslop, "bug-fix", "/w", "release-1.x"), /deslop \(after your last edit\)/);
-  assert.match(preToolDecision(bash("gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x"), t("technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), /no-comments/);
+  for (const command of ["gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x", "gh api repos/o/r/pulls --input pr.json", "gh api -X PATCH repos/o/r/pulls/3 -f body=x", "gh api --method POST repos/o/r/pulls", "gh pr create --fill"]) {
+    assert.match(preToolDecision(bash(command, "a1"), t("no-comments", "technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), /routine opens and updates the PR/, command);
+  }
   assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), t(), "bug-fix", "/w", "release-1.x"), null);
   assert.equal(preToolDecision(edit("src/a.ts"), t(), "investigation", "/w", "release-1.x"), null);
 });
@@ -237,4 +239,14 @@ test("the work session may not merge or push to trunk, lead or subagent, in any 
   for (const command of ["git push -u origin claude/fix-tooltip", "gh api repos/o/r/pulls/12", "git push origin claude/release-2.x-fix", "gh api repos/o/r/pulls/12/merged-files"]) {
     assert.equal(mergeRefusal(command, "release-2.x"), null, command);
   }
+});
+
+test("the PR is ready only when deslop and no-comments ran after the last delegate", () => {
+  const seq = (...steps) => readTranscript([prompt, ...steps.flatMap(([name, input]) => call(name, input))].join("\n"));
+  const skill = (s) => ["Skill", { skill: s }];
+  const delegate = ["Agent", { subagent_type: "pstack:poteto-agent", prompt: "fix" }];
+  const sicko = ["Agent", { subagent_type: "pstack:comment-sicko", prompt: "review" }];
+  assert.deepEqual(prReadiness(seq(delegate, skill("pstack:deslop"), skill("no-comments"), sicko, skill("technical-writing"), skill("unslop"))), []);
+  assert.deepEqual(prReadiness(seq(skill("deslop"), skill("no-comments"), delegate, skill("technical-writing"), skill("unslop"))), ["deslop has not run after the last delegate's work", "no-comments has not run after the last delegate's work"]);
+  assert.deepEqual(prReadiness(seq(delegate, skill("deslop"), skill("no-comments"))), ["technical-writing has not run", "unslop has not run"]);
 });
