@@ -25,7 +25,7 @@ If you cannot read the repo, stop and tell the user the skill needs access to Gi
 When the embed has no series type for the chart, combine series that each draw part of the shape. These rules hold for gt-embed 2.0.0-beta.4:
 
 - The embed drops `markLine` and `markArea`. Draw a reference line as a two-point `line` series, and set `"symbolSize": 0` so its ends don't read as data points.
-- The embed shows a legend when a chart has two or more series, not counting error bars, and lists every series that has a `name`. Leave helper series unnamed.
+- The embed shows a legend when a chart has two or more series, not counting error bars, and lists every series that has a `name`. Name every series that carries data a reader must tell apart, such as the two dots of a dumbbell. Leave only the helpers that draw a shape, such as an offset bar or a reference line, unnamed.
 - The embed prints a value label inside every stacked bar. Set `"label": {"show": False}` on a helper bar, such as a transparent offset bar.
 - A `custom` series draws only the shape its `renderItem` names, `"errorBar"` or `"barRange"`.
 
@@ -52,7 +52,7 @@ When the embed has no series type for the chart, combine series that each draw p
    ```
 
    Put the image's title, subtitle, and notes in the `title`, `subtitle`, and `description` keywords, never in `option.title`. If the image has one long title, put the figure name in `title` and the rest in `subtitle`.
-4. Render the notebook with `render.py` in this skill's directory, using the gt-charts version the user's Databricks runs. If the user doesn't know it, use the newest `v2` tag, a beta included, from `git ls-remote --tags https://github.com/Giving-Tuesday/gt-charts`.
+4. Render the notebook with `render.py` in this skill's directory, using the gt-charts version the user's Databricks runs. If the user doesn't know it, use the newest `v2` tag, a beta included. `git ls-remote --tags --sort=-v:refname https://github.com/Giving-Tuesday/gt-charts 'v2*'` lists it first.
 
    ```bash
    uv run --with "gt-charts[export] @ git+https://github.com/Giving-Tuesday/gt-charts.git@<tag>" python <skill-dir>/render.py <notebook.py> --out-dir <tmp-dir>
@@ -62,7 +62,7 @@ When the embed has no series type for the chart, combine series that each draw p
 
    - If it says "the embed rendered nothing", add `--local-bundle`. That option downloads the bundle with `npm`.
    - If Playwright cannot find a browser and Chromium is installed, pass `--chromium <path>`. Otherwise run `playwright install chromium` in the same environment.
-5. View each PNG next to the source image. Compare the chart type, the series, every value and label, the legend entries, and any reference lines. Colours, fonts, and spacing will differ from the image, and that is correct. `render.py` prints a `sets style` line for each chart that sets a style key. Remove each key it lists, unless the chart cannot show its data without it. A transparent offset bar, a thin `barWidth` that turns a bar into a stem, `"symbolSize": 0` on a reference line, `"barCategoryGap": 0` on a histogram, and a `height` that gives many rows room are such keys. Render after each removal, because a key can turn out to be needed. Fix the notebook and render again until the function and data match and every remaining style key has such a reason.
+5. View each PNG next to the source image. Compare the chart type, the series, every value and label, the legend entries, and any reference lines. Colours, fonts, and spacing will differ from the image, and that is correct. `render.py` prints a `sets style` line for each chart that sets a style key. Remove each key it lists, unless the chart cannot show its data without it. A transparent offset bar, a thin `barWidth` that turns a bar into a stem, `"symbolSize": 0` on a reference line, `"barCategoryGap": 0` on a histogram, a `symbolSize` that makes a dot big enough to hold its label, a `height` that gives many rows room, and a `maxWidth` that gives long labels and the plot room are such keys. Render after each removal, because a key can turn out to be needed. Fix the notebook and render again until the function and data match and every remaining style key has such a reason.
 6. Report the notebook path, the PNG path, the values you read with doubt, each style key you kept with its reason, and any difference in function or data you left with its reason. To import the file, the user opens a Databricks workspace folder and chooses **Import**, then **File**.
 
 If you cannot run Python or a browser here, write the notebook anyway. Tell the user it is unrendered, and list what to check when they run it.
