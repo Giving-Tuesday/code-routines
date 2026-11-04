@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, checkoutWorkBranch, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditGit, auditResult, ignoreAudit, transcriptPath, prBodyFindings, browserFact, buildPrompt, checkoutWorkBranch, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
@@ -28,6 +28,7 @@ const compliant = [
   ...call("Bash", { command: "node /x/scripts/check-playbooks.mjs" }),
 ].join("\n");
 
+const withPlaybooks = { projectPlaybooks: true };
 const observedFailure = [prompt, ...call("Skill", { skill: "pstack:poteto-mode" }), ...call("Bash", { command: "npm test" })].join("\n");
 
 test("bug-fix playbook has numbered steps to audit", () => {
@@ -39,7 +40,7 @@ test("compliant transcript passes", () => {
 });
 
 test("observed failure is blocked on every skipped step", () => {
-  const problems = auditTranscript(readTranscript(observedFailure), "bug-fix", steps);
+  const problems = auditTranscript(readTranscript(observedFailure), "bug-fix", steps, "", withPlaybooks);
   for (const want of ["todolist lacks bug-fix step 1", "deslop has not run", "no-comments has not run", "technical-writing has not run", "skill how never ran", "no driver skill", "not delegated", "check-playbooks.mjs never ran", "skill why neither ran"]) {
     assert.ok(problems.some((p) => p.includes(want)), `missing: ${want}\n${problems.join("\n")}`);
   }
@@ -203,7 +204,7 @@ test("the repo's PR template is found and its headings are checked in the PR bod
   assert.deepEqual(missingTemplateHeadings(template, null), ["Summary", "Test plan", "Screenshots"]);
   const prompt = buildPrompt({ playbook: "bug-fix", base: "release-1.x", slug: "o/r", branch: "b", toolchains: [], prTemplate: ".github/pull_request_template.md", name: "n", text: "t", url: "u", repo: "r", mode: "pr", fixTarget: "f" });
   assert.match(prompt, /headings of the repo's template, \.github\/pull_request_template\.md/);
-  assert.match(prompt, /mkdir, echo, printf, cd, pwd, wc/);
+  assert.match(prompt, /mkdir, echo, printf, cd, pwd, wc, sort, uniq, diff, test, jq, cp, mv, touch\./);
 });
 
 test("screenshots go under the template's Screenshots heading, once, however often attached", () => {
@@ -281,4 +282,114 @@ test("prepare's checkout never discards uncommitted changes or unpushed commits"
   assert.ok(existsSync(join(work, ".audit/ticket.json")));
   assert.deepEqual(checkoutWorkBranch(work, "claude/asana-1", "release-2.x"), []);
   assert.equal(git(work, "rev-parse", "--abbrev-ref", "HEAD"), "claude/asana-1");
+});
+
+const git = (cwd, ...args) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+function workRepo() {
+  const root = mkdtempSync(join(tmpdir(), "gate-"));
+  git(root, "init", "-q", "--bare", "origin.git");
+  git(root, "init", "-q", "-b", "main", "work");
+  const work = join(root, "work");
+  writeFileSync(join(work, "a.txt"), "a\n");
+  git(work, "add", "a.txt");
+  git(work, "commit", "-qm", "base");
+  git(work, "remote", "add", "origin", join(root, "origin.git"));
+  git(work, "push", "-q", "origin", "main:release-2.x");
+  git(work, "fetch", "-q", "origin");
+  return { root, work, base: git(work, "rev-parse", "HEAD") };
+}
+
+const withEnv = (vars, fn) => {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(vars)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  try { return fn(); } finally { for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v); }
+};
+
+test("check-playbooks.mjs is required only when the repo has project playbooks", () => {
+  const transcript = readTranscript(observedFailure);
+  assert.ok(!auditTranscript(transcript, "bug-fix", steps).some((p) => p.includes("check-playbooks.mjs")));
+  assert.ok(auditTranscript(transcript, "bug-fix", steps, "", withPlaybooks).some((p) => p.includes("check-playbooks.mjs never ran")));
+});
+
+test("a worktree, or a checkout with no info/exclude, still gets .audit/ ignored", () => {
+  const { root, work } = workRepo();
+  rmSync(join(work, ".git/info/exclude"), { force: true });
+  ignoreAudit(work);
+  ignoreAudit(work);
+  assert.equal(readFileSync(join(work, ".git/info/exclude"), "utf8").split(".audit/").length, 2);
+  const tree = join(root, "tree");
+  git(work, "worktree", "add", "-q", "-b", "wt", tree);
+  mkdirSync(join(tree, ".audit"));
+  writeFileSync(join(tree, ".audit/x"), "x");
+  assert.doesNotMatch(git(tree, "status", "--porcelain", "--untracked-files=all"), /\.audit/);
+});
+
+test("a slash or plugin prefix on a skill name counts for every skill check", () => {
+  const seq = (...names) => readTranscript([prompt, ...call("Agent", { subagent_type: "pstack:poteto-agent", prompt: "fix" }), ...names.flatMap((skill) => call("Skill", { skill }))].join("\n"));
+  assert.deepEqual(prReadiness(seq("/deslop", "pstack:no-comments", "/pstack:technical-writing", "unslop")), []);
+  const problems = auditTranscript(seq("/how", "/pstack:verify", "/pstack:deslop", "/why", "/tdd", "/no-comments", "/technical-writing", "/unslop"), "bug-fix", steps);
+  assert.ok(!problems.some((p) => /never ran|has not run|no driver|neither ran/.test(p)), problems.join("\n"));
+});
+
+test("env files are forbidden at any depth and CI dirs only at the root", () => {
+  const { work, base } = workRepo();
+  git(work, "switch", "-q", "-c", "claude/t");
+  mkdirSync(join(work, "apps/web"), { recursive: true });
+  mkdirSync(join(work, "docs/.github"), { recursive: true });
+  for (const f of ["apps/web/.env", "apps/web/.env.local", ".circleci/c.yml", "docs/.github/n.md", "apps/web/env.ts"]) {
+    mkdirSync(join(work, f, ".."), { recursive: true });
+    writeFileSync(join(work, f), "x\n");
+  }
+  git(work, "add", "-A", "-f");
+  git(work, "commit", "-qm", "work");
+  const state = { baseSha: base, base: "release-2.x", branch: "claude/t", playbook: "feature", slug: "none/none" };
+  const { violations } = auditGit(state, work);
+  assert.deepEqual(violations.filter((v) => v.startsWith("touches")), ["touches CI config or secrets: .circleci/c.yml", "touches CI config or secrets: apps/web/.env", "touches CI config or secrets: apps/web/.env.local"]);
+});
+
+test("a compliance row passes only when its third cell starts with done or skip:", () => {
+  const table = (cell) => `## Playbook compliance\n${steps.map((s) => `| ${s.n} | step | ${s.n === 1 ? cell : "done"} | ev |`).join("\n")}`;
+  assert.deepEqual(auditResult(table("done"), steps), []);
+  assert.deepEqual(auditResult(table("skip: no cheap test"), steps), []);
+  assert.deepEqual(auditResult(table("missing"), steps).length, 1);
+  assert.equal(auditResult(`## Playbook compliance\n| 1 | x | missing | not done |`, steps).length, steps.length);
+});
+
+test("CLAUDE_CONFIG_DIR relocates the transcripts and the pstack playbooks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+  mkdirSync(join(dir, "projects/p"), { recursive: true });
+  writeFileSync(join(dir, "projects/p/sess.jsonl"), "");
+  const playbooks = join(dir, "plugins/cache/m/pstack/1.0.0/skills/poteto-mode/playbooks");
+  mkdirSync(playbooks, { recursive: true });
+  writeFileSync(join(playbooks, "bug-fix.md"), "1. x\n");
+  withEnv({ CLAUDE_CONFIG_DIR: dir, PSTACK_POTETO_DIR: undefined }, () => {
+    assert.equal(transcriptPath("sess"), join(dir, "projects/p/sess.jsonl"));
+    assert.equal(pstackPlaybooks(), playbooks);
+  });
+});
+
+test("a denial with neither a command nor a tool name is still summarized", () => {
+  assert.equal(summarizeDenials([JSON.stringify({ permission_denials: [{}] })]).length, 1);
+});
+
+test("the PR body is checked against the template before and after the PR opens", () => {
+  const { work, base } = workRepo();
+  git(work, "switch", "-q", "-c", "claude/t");
+  writeFileSync(join(work, "b.txt"), "b\n");
+  git(work, "add", "b.txt");
+  git(work, "commit", "-qm", "work");
+  mkdirSync(join(work, ".audit"));
+  writeFileSync(join(work, "tpl.md"), "## Summary\n\n## Test plan\n");
+  const state = { baseSha: base, base: "release-2.x", branch: "claude/t", playbook: "feature", slug: "none/none", prTemplate: "tpl.md" };
+  assert.deepEqual(auditGit(state, work).findings.filter((f) => f.startsWith("PR body")), []);
+  writeFileSync(join(work, ".audit/pr-body.md"), "## Why\nx\n## Test plan\n");
+  assert.deepEqual(auditGit(state, work).findings.filter((f) => f.startsWith("PR body")), ["PR body lacks the template headings: Summary"]);
+  assert.deepEqual(prBodyFindings(work, state, ""), ["PR body lacks the template headings: Summary, Test plan"]);
+  assert.deepEqual(prBodyFindings(work, { ...state, prTemplate: null }, ""), []);
+});
+
+test("the allowlist includes jq, cp, mv, touch and TaskStop", () => {
+  const tools = allowedTools([]);
+  for (const t of ["Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)", "TaskStop"]) assert.ok(tools.includes(t), t);
 });
