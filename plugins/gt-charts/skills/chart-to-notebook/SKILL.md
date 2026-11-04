@@ -25,7 +25,7 @@ If you cannot read the repo, stop and tell the user the skill needs access to Gi
 When the embed has no series type for the chart, combine series that each draw part of the shape. These rules hold for gt-embed 2.0.0-beta.4:
 
 - The embed drops `markLine` and `markArea`. Draw a reference line as a two-point `line` series, and set `"symbolSize": 0` so its ends don't read as data points.
-- The embed shows a legend when a chart has two or more series, not counting error bars, and lists every series that has a `name`. Name every series that carries data a reader must tell apart, such as the two dots of a dumbbell. Leave only the helpers that draw a shape, such as an offset bar or a reference line, unnamed.
+- The embed shows a legend when a chart has two or more series, not counting error bars, and lists every series that has a `name`. Name every series that carries data a reader must tell apart, such as the two dots of a dumbbell. Name a reference line with its caption, such as "All donors: 37%", so the legend carries the caption and no label has to fit beside the line. Leave only the helpers that draw a shape, such as an offset bar, unnamed.
 - The embed prints a value label inside every stacked bar. Set `"label": {"show": False}` on a helper bar, such as a transparent offset bar.
 - A `custom` series draws only the shape its `renderItem` names, `"errorBar"` or `"barRange"`.
 
