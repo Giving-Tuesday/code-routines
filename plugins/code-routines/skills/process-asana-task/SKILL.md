@@ -21,7 +21,7 @@ NOTIFY-BLOCKED: NOTIFY with the reasons, mark the task [blocked], and move it to
 
 2. Write `.audit/ticket.json` in the checkout of the task's Repo custom field. If that repo is not checked out in this session, NOTIFY-BLOCKED. The file holds `gid`, `url`, `name`, `text` (the description, every comment, and the content of linked pages), and `fields` with Repo, Type, Mode, Fix target and Release version exactly as Asana shows them.
 
-3. From that checkout, run `node <this skill's directory>/routine.mjs prepare .audit/ticket.json`. It validates the fields, computes BASE, resets the branch to origin/BASE and installs dependencies. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
+3. From that checkout, run `node <this skill's directory>/routine.mjs prepare .audit/ticket.json`. It validates the fields, computes BASE, puts the work branch on origin/BASE and installs dependencies. It never discards work: it stops when the checkout has uncommitted changes, or when the branch has commits that are on no remote. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
 
 4. Run `node <this skill's directory>/routine.mjs run` in the background with a timeout of at least two hours, and wait for it. It starts the work session with only the shell tools of the repo's lockfiles allowed, a seeded `.audit/todo.md`, a PreToolUse hook that refuses out-of-order commits, PR creation and lead edits to source, and a Stop hook that sends the gate's gaps back to the session up to three times before it may finish. On a non-zero exit, NOTIFY-BLOCKED with its `problems`.
 
