@@ -8,6 +8,7 @@ import { readTranscript, skillName, summarizeDenials, transcriptPath, usedSkill 
 
 export const NO_DRIVER = "no driver skill (run or verify) ran on the real surface";
 export const NOT_DELEGATED = "code was not delegated to a pstack:poteto-agent subagent";
+export const noPr = (branch) => `no PR for ${branch}`;
 const DRIVERS = ["run", "verify"];
 const DELEGATE = "pstack:poteto-agent";
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
@@ -111,7 +112,7 @@ export function auditGit(state, cwd) {
   findings.push(...changelogFindings(cwd, from));
   if (!branchPushed(cwd, branch)) findings.push(`origin/${branch} does not match HEAD`);
   const pr = findPr(cwd, state, "all");
-  if (!pr) violations.push(`no PR for ${branch}`);
+  if (!pr) violations.push(noPr(branch));
   else {
     if (pr.base.ref !== base) violations.push(`PR base is ${pr.base.ref}, expected ${base}`);
     if (pr.merged_at) violations.push("the work session merged the PR; only the routine merges");
@@ -134,8 +135,8 @@ export function gate(cwd) {
   const git = auditGit(state, cwd);
   const todo = readIfExists(join(cwd, TODO)) ?? "";
   const audit = { projectPlaybooks: existsSync(join(cwd, ".agents/playbooks")) };
+  const refusals = summarizeDenials(claudeOutputs(cwd).map((f) => readFileSync(f, "utf8")));
   const findings = [
-    ...summarizeDenials(claudeOutputs(cwd).map((f) => readFileSync(f, "utf8"))),
     ...(path
       ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo, audit)
       : ["no transcript for the work session"]),
@@ -143,5 +144,5 @@ export function gate(cwd) {
     ...git.findings,
   ];
   const { violations, pr } = git;
-  return { ok: violations.length === 0, pr, transcript: path, result: resultPath, violations, findings };
+  return { ok: violations.length === 0, pr, transcript: path, result: resultPath, violations, findings, refusals };
 }

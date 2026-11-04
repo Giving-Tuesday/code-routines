@@ -4,12 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, readFileSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { auditGit, auditResult, auditTranscript, prBodyFindings, prReadiness, unreleasedSection, NO_DRIVER, NOT_DELEGATED } from "./lib/audit.mjs";
+import { auditGit, auditResult, auditTranscript, gate, prBodyFindings, prReadiness, unreleasedSection, NO_DRIVER, NOT_DELEGATED } from "./lib/audit.mjs";
 import { findPrTemplate, missingTemplateHeadings, repoSlug } from "./lib/github.mjs";
-import { mergeRefusal, preToolDecision, stopDecision } from "./lib/hooks.mjs";
+import { preToolDecision, stopDecision, stopHook } from "./lib/hooks.mjs";
 import { ciState, failedMergeChecks, reviewVerdict } from "./lib/merge.mjs";
 import { allowedTools, playbookStepsFor, pstackPlaybooks, pstackRoot, seedTodo, TOOLCHAINS } from "./lib/playbooks.mjs";
-import { shrinkScreenshot, withScreenshots } from "./lib/pr.mjs";
+import { openPr, shrinkScreenshot, withScreenshots } from "./lib/pr.mjs";
 import { checkoutWorkBranch, ignoreAudit } from "./lib/prepare.mjs";
 import { browserFact, buildPrompt, buildRepairPrompt } from "./lib/session.mjs";
 import { baseFor, parseTicket, playbookFor } from "./lib/ticket.mjs";
@@ -115,6 +115,8 @@ test("a uv repo gets uv and pytest; a Node-only repo does not", () => {
 test("the seeded todo.md satisfies the todolist check once ticked or skipped", () => {
   const todo = seedTodo("bug-fix", steps);
   assert.match(todo, /Opening a PR: run \/deslop/);
+  assert.match(todo, /Opening a PR: write the PR title to \.audit\/pr-title\.txt and the body to \.audit\/pr-body\.md/);
+  assert.doesNotMatch(todo, /read the PR back/);
   const noTasks = readTranscript([prompt, ...call("Skill", { skill: "how" })].join("\n"));
   assert.ok(auditTranscript(noTasks, "bug-fix", steps, todo).some((p) => p.includes("step 1")));
   const ticked = todo.replace(/- \[ \] 1\./, "- [x] 1.").replace(/(- \[ \] 2\..*)/, "$1 skip: one file");
@@ -236,24 +238,67 @@ test("screenshots shrink to at most 1280 px wide before upload", { skip: !trySpa
   assert.ok(statSync(small).size < statSync(big).size);
 });
 
-test("the work session may not merge or push to trunk, lead or subagent, in any playbook", () => {
-  for (const command of ["gh api -X PUT repos/o/r/pulls/12/merge", "gh pr merge 12 --merge", "git push origin release-2.x", "git push origin HEAD:release-2.x", "git push -f origin HEAD:refs/heads/main", "git push origin main", "git -C /w push origin HEAD:release-2.x", "gh api -X PATCH repos/o/r/git/refs/heads/release-2.x -f sha=abc"]) {
-    assert.ok(mergeRefusal(command, "release-2.x"), command);
-    for (const agent_id of [undefined, "a1"]) {
-      assert.match(preToolDecision({ tool_name: "Bash", tool_input: { command }, agent_id }, "investigation", "release-2.x"), /routine merges/);
-    }
+test("the work session may not merge or write to trunk, lead or subagent, in any playbook", () => {
+  const decide = (command, agent_id) => preToolDecision({ tool_name: "Bash", tool_input: { command }, agent_id }, "investigation", "release-2.x");
+  const refused = [
+    "gh api -X PUT repos/o/r/pulls/12/merge",
+    "gh pr merge 12 --merge",
+    "git push origin release-2.x",
+    "git push origin HEAD:release-2.x",
+    "git push -f origin HEAD:refs/heads/main",
+    "git push origin main",
+    "git -C /w push origin HEAD:release-2.x",
+    "git --no-pager push origin HEAD:main",
+    "git -c push.default=current push origin HEAD:master",
+    "git push origin 'HEAD:release-2.x'",
+    'git push origin "HEAD:main"',
+    "gh api -X PATCH repos/o/r/git/refs/heads/release-2.x -f sha=abc",
+    "gh api repos/o/r/merges -f base=release-2.x -f head=claude/x",
+    "gh api -X POST repos/o/r/merges --input m.json",
+    "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA== -f branch=release-2.x",
+    "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA== -f 'branch=main'",
+    "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA==",
+    "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+  ];
+  for (const command of refused) {
+    for (const agent_id of [undefined, "a1"]) assert.match(decide(command, agent_id) ?? "", /routine merges/, command);
   }
-  for (const command of ["git push -u origin claude/fix-tooltip", "gh api repos/o/r/pulls/12", "git push origin claude/release-2.x-fix", "gh api repos/o/r/pulls/12/merged-files", "gh api repos/o/r/git/refs/heads/release-2.x"]) {
-    assert.equal(mergeRefusal(command, "release-2.x"), null, command);
-  }
+  const allowed = [
+    "git push -u origin claude/fix-tooltip",
+    "gh api repos/o/r/pulls/12",
+    "git push origin claude/release-2.x-fix",
+    "gh api repos/o/r/pulls/12/merged-files",
+    "gh api repos/o/r/git/refs/heads/release-2.x",
+    "gh api repos/o/r/contents/a.txt?ref=main",
+    "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA== -f branch=claude/x",
+    "gh api graphql -f query='query { viewer { login } }'",
+  ];
+  for (const command of allowed) assert.equal(decide(command), null, command);
 });
 
 test("the work session may not force-push, but may push new commits", () => {
   const decide = (command) => preToolDecision({ tool_name: "Bash", tool_input: { command } }, "bug-fix", "release-2.x");
-  for (const command of ["git push --force origin claude/x", "git push -f origin claude/x", "git push --force-with-lease origin claude/x", "git push origin +claude/x"]) {
-    assert.match(decide(command), /Never rewrite pushed history/, command);
-  }
-  for (const command of ["git push -u origin claude/x", 'git commit -m "push -f"']) assert.equal(decide(command), null, command);
+  const forced = [
+    "git push --force origin claude/x",
+    "git push -f origin claude/x",
+    "git push --force-with-lease origin claude/x",
+    "git push origin +claude/x",
+    "git push -fu origin claude/x",
+    "git push -uf origin claude/x",
+    "git --no-pager push -f origin claude/x",
+    "git -c core.askPass=x push -f origin claude/x",
+    "git push origin '+claude/x'",
+    'git push "--force" origin claude/x',
+  ];
+  for (const command of forced) assert.match(decide(command) ?? "", /Never rewrite pushed history/, command);
+  const allowed = [
+    "git push -u origin claude/x",
+    'git commit -m "push -f"',
+    'git --no-pager commit -m "push -f"',
+    "git --no-pager log -n 1",
+    "git push --follow-tags origin claude/x",
+  ];
+  for (const command of allowed) assert.equal(decide(command), null, command);
 });
 
 test("the PR is ready only when deslop and no-comments ran after the last delegate", () => {
@@ -409,4 +454,63 @@ test("the PR body is checked against the template, from pr-body.md before the PR
 test("the allowlist includes jq, cp, mv, touch and TaskStop", () => {
   const tools = allowedTools([]);
   for (const t of ["Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)", "TaskStop"]) assert.ok(tools.includes(t), t);
+});
+
+function pushedWorkBranch() {
+  const repo = workRepo();
+  git(repo.work, "switch", "-q", "-c", "claude/t");
+  writeFileSync(join(repo.work, "b.txt"), "b\n");
+  git(repo.work, "add", "b.txt");
+  git(repo.work, "commit", "-qm", "work");
+  git(repo.work, "push", "-q", "origin", "claude/t");
+  mkdirSync(join(repo.work, ".audit"));
+  const state = { baseSha: repo.base, base: "release-2.x", branch: "claude/t", playbook: "feature", slug: "o/r", name: "Fix the tooltip", url: "https://app.asana.com/0/0/1" };
+  writeFileSync(join(repo.work, ".audit/routine.json"), JSON.stringify(state));
+  return { ...repo, state };
+}
+
+function fakeGh(root) {
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const log = join(root, "gh-input.json");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\ncase "$*" in\n  *--input*) cat > ${log}; echo '{"html_url":"https://github.com/o/r/pull/1","number":1}' ;;\n  *) echo '[]' ;;\nesac\n`, { mode: 0o755 });
+  const cfg = join(root, "cfg");
+  mkdirSync(join(cfg, "projects"), { recursive: true });
+  const env = { PATH: `${bin}:${process.env.PATH}`, CLAUDE_CONFIG_DIR: cfg, PSTACK_POTETO_DIR: join(pstackPlaybooks(), "..") };
+  return { env, sent: () => JSON.parse(readFileSync(log, "utf8")) };
+}
+
+test("open-pr opens the PR without pr-title.txt or pr-body.md and reports each default", () => {
+  const { root, work, state } = pushedWorkBranch();
+  const gh = fakeGh(root);
+  const bare = withEnv(gh.env, () => openPr(work));
+  assert.equal(bare.ok, true);
+  assert.deepEqual(gh.sent(), { title: "Fix the tooltip", body: "Asana task: https://app.asana.com/0/0/1\n", head: "claude/t", base: "release-2.x", draft: false });
+  assert.deepEqual(bare.findings.slice(0, 2), ["no .audit/pr-title.txt, used the ticket name", "no .audit/pr-body.md, used a line naming the Asana task"]);
+  writeFileSync(join(work, ".audit/result.md"), "## Playbook compliance\n| 1 | x | done | e |\n");
+  const fromResult = withEnv(gh.env, () => openPr(work));
+  assert.equal(gh.sent().body, "## Playbook compliance\n| 1 | x | done | e |\n");
+  assert.ok(fromResult.findings.includes("no .audit/pr-body.md, used .audit/result.md"));
+  writeFileSync(join(work, ".audit/pr-title.txt"), "fix(ui): clamp the tooltip\n");
+  writeFileSync(join(work, ".audit/pr-body.md"), "## Why\nx\n");
+  const written = withEnv(gh.env, () => openPr(work));
+  assert.deepEqual([gh.sent().title, gh.sent().body], ["fix(ui): clamp the tooltip", "## Why\nx\n"]);
+  assert.ok(!written.findings.some((f) => f.startsWith("no .audit/pr-")), written.findings.join("\n"));
+  writeFileSync(join(work, "c.txt"), "c\n");
+  git(work, "add", "c.txt");
+  git(work, "commit", "-qm", "unpushed");
+  assert.deepEqual(withEnv(gh.env, () => openPr(work)).problems, [`origin/${state.branch} does not match HEAD`]);
+});
+
+test("permission refusals are reported apart from findings and never reach the Stop hook", () => {
+  const { root, work } = pushedWorkBranch();
+  const gh = fakeGh(root);
+  const denial = { tool_name: "Bash", tool_input: { command: "uv run pytest" } };
+  writeFileSync(join(work, ".audit/claude-run.json"), JSON.stringify({ permission_denials: [denial] }));
+  const result = withEnv(gh.env, () => gate(work));
+  assert.deepEqual(result.refusals, ["the routine refused `uv run pytest` 1 time"]);
+  assert.ok(!result.findings.some((f) => f.includes("refused")), result.findings.join("\n"));
+  assert.ok(result.violations.includes("no PR for claude/t"));
+  const reason = withEnv(gh.env, () => stopHook(work))?.reason ?? "";
+  assert.doesNotMatch(reason, /refused|no PR for/);
 });

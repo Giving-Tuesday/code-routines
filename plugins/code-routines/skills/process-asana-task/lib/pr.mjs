@@ -6,26 +6,39 @@ import { prBodyFindings, prReadiness } from "./audit.mjs";
 import { branchPushed, findPr } from "./github.mjs";
 import { PLAYBOOKS } from "./playbooks.mjs";
 import { readIfExists, trySh } from "./shell.mjs";
-import { AUDIT_DIR, PR_BODY, PR_TITLE, SCREENSHOT_INDEX, SHRUNK_DIR, loadState } from "./state.mjs";
+import { AUDIT_DIR, PR_BODY, PR_TITLE, RESULT, SCREENSHOT_INDEX, SHRUNK_DIR, loadState } from "./state.mjs";
 import { readTranscript, transcriptPath } from "./transcript.mjs";
+
+const nonEmpty = (path) => {
+  const text = readIfExists(path);
+  return text?.trim() ? text : null;
+};
+
+function prText(cwd, state) {
+  const title = nonEmpty(join(cwd, PR_TITLE))?.trim();
+  const body = nonEmpty(join(cwd, PR_BODY));
+  const result = nonEmpty(join(cwd, RESULT));
+  return {
+    title: title ?? state.name,
+    body: body ?? result ?? `Asana task: ${state.url}\n`,
+    findings: [
+      ...(title ? [] : [`no ${PR_TITLE}, used the ticket name`]),
+      ...(body ? [] : [`no ${PR_BODY}, used ${result ? RESULT : "a line naming the Asana task"}`]),
+    ],
+  };
+}
 
 export function openPr(cwd) {
   const state = loadState(cwd);
   if (!PLAYBOOKS[state.playbook].opensPr) return { ok: true, skipped: `${state.playbook} opens no PR` };
   const path = transcriptPath(state.sessionId);
-  const title = (readIfExists(join(cwd, PR_TITLE)) ?? "").trim();
-  const body = readIfExists(join(cwd, PR_BODY)) ?? "";
-  const pushed = branchPushed(cwd, state.branch);
+  const { title, body, findings: defaults } = prText(cwd, state);
   const findings = [
+    ...defaults,
     ...(path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"]),
     ...prBodyFindings(cwd, state, body),
   ];
-  const problems = [
-    ...(title ? [] : [`no ${PR_TITLE}`]),
-    ...(body.trim() ? [] : [`no ${PR_BODY}`]),
-    ...(pushed ? [] : [`origin/${state.branch} does not match HEAD`]),
-  ];
-  if (problems.length) return { ok: false, problems, findings };
+  if (!branchPushed(cwd, state.branch)) return { ok: false, problems: [`origin/${state.branch} does not match HEAD`], findings };
   const api = (args, input) =>
     JSON.parse(execFileSync("gh", ["api", ...args, "--input", "-"], { cwd, encoding: "utf8", input: JSON.stringify(input) }));
   const open = findPr(cwd, state, "open");
