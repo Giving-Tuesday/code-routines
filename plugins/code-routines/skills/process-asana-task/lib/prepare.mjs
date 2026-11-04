@@ -45,6 +45,7 @@ export function prepare(ticketPath, cwd) {
   const parsed = parseTicket(JSON.parse(readFileSync(ticketPath, "utf8")));
   if (parsed.error) return { ok: false, problems: [parsed.error] };
   const branch = workBranch(cwd, parsed.gid);
+  if ([parsed.base, "main", "master"].includes(branch)) return { ok: false, problems: [`the work branch ${branch} is a trunk branch`] };
   sh("git", ["fetch", "origin", "--tags"], cwd);
   if (!trySh("git", ["rev-parse", "--verify", `origin/${parsed.base}`], cwd)) {
     return { ok: false, problems: [`${parsed.base} is not on origin`] };

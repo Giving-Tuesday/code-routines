@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -276,6 +276,10 @@ test("the work session may not merge or write to trunk, lead or subagent, in any
   const refused = [
     "gh api -X PUT repos/o/r/pulls/12/merge",
     "gh pr merge 12 --merge",
+    "gh api -X=PUT repos/o/r/pulls/12/merge",
+    "gh api --method=PUT repos/o/r/pulls/12/merge",
+    "gh api repos/o/r/pulls/12/merge -fmerge_method=merge",
+    "gh api -X PATCH repos/o/r/git/refs/heads/main?x=1 -f sha=abc",
     "git push origin release-2.x",
     "git push origin HEAD:release-2.x",
     "git push -f origin HEAD:refs/heads/main",
@@ -608,6 +612,28 @@ test("the PreToolUse hook checks the checkout it was given from any directory, a
   assert.equal(lost.status, 0);
   assert.equal(decision(lost).permissionDecision, "deny");
   assert.match(decision(lost).permissionDecisionReason, /cannot check this command/);
+});
+
+test("the hook command survives a checkout path with shell characters", () => {
+  const { work } = pushedWorkBranch();
+  const odd = join(dirname(work), "odd $HOME `x` it's");
+  renameSync(work, odd);
+  writeSettings(odd);
+  const command = JSON.parse(readFileSync(join(odd, ".audit/settings.json"), "utf8")).hooks.PreToolUse[0].hooks[0].command;
+  const hook = (bash) => spawnSync("sh", ["-c", command], { encoding: "utf8", input: JSON.stringify({ tool_name: "Bash", tool_input: { command: bash } }) });
+  assert.equal(hook("git status").stdout, "");
+  assert.match(JSON.parse(hook("gh pr merge 1").stdout).hookSpecificOutput.permissionDecisionReason, /routine merges/);
+});
+
+test("prepare refuses a work branch that is a trunk branch", () => {
+  const { work } = workRepo();
+  const ticket = { gid: "7", url: "u", name: "n", text: "t", fields: { Repo: "r", Type: "Feature", Mode: "pr", "Fix target": "f", "Release version": "2.0" } };
+  mkdirSync(join(work, ".audit"), { recursive: true });
+  writeFileSync(join(work, ".audit/ticket.json"), JSON.stringify(ticket));
+  for (const branch of ["release-2.x", "main"]) {
+    const out = withEnv({ ROUTINE_BRANCH: branch }, () => prepare(join(work, ".audit/ticket.json"), work));
+    assert.deepEqual(out.problems, [`the work branch ${branch} is a trunk branch`]);
+  }
 });
 
 test("prepare clears an earlier ticket's .audit files once the checkout is safe to move", () => {

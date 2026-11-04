@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { prBodyFindings, prReadiness } from "./audit.mjs";
 import { branchPushed, findPr, ghWrite } from "./github.mjs";
@@ -18,7 +17,7 @@ function prText(cwd, state) {
   const result = nonEmpty(join(cwd, RESULT));
   const fallback = result ?? `Asana task: ${state.url}\n`;
   const source = result ? RESULT : "a line naming the Asana task";
-  const template = state.prTemplate && readFileSync(join(cwd, state.prTemplate), "utf8");
+  const template = state.prTemplate && readIfExists(join(cwd, state.prTemplate));
   return {
     title: title ?? state.name,
     body: body ?? (template ? `${template.trimEnd()}\n\n${fallback}` : fallback),
