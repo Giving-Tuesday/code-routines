@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, checkoutWorkBranch, commentFindings, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, checkoutWorkBranch, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
@@ -23,8 +23,8 @@ const compliant = [
     ...call("TaskCreate", { subject: `${s.n}. ${s.text}`, description: "" }, `Task #${i + 1} created successfully`),
     ...call("TaskUpdate", { taskId: String(i + 1), status: "completed" }),
   ]),
-  ...["how", "why", "pstack:tdd", "run", "deslop", "no-comments", "technical-writing", "unslop"].flatMap((skill) => call("Skill", { skill })),
   ...call("Agent", { subagent_type: "pstack:poteto-agent", prompt: "fix" }),
+  ...["how", "why", "pstack:tdd", "run", "deslop", "no-comments", "technical-writing", "unslop"].flatMap((skill) => call("Skill", { skill })),
   ...call("Bash", { command: "node /x/scripts/check-playbooks.mjs" }),
 ].join("\n");
 
@@ -40,7 +40,7 @@ test("compliant transcript passes", () => {
 
 test("observed failure is blocked on every skipped step", () => {
   const problems = auditTranscript(readTranscript(observedFailure), "bug-fix", steps);
-  for (const want of ["todolist lacks bug-fix step 1", "skill deslop never ran", "skill no-comments never ran", "skill how never ran", "no driver skill", "not delegated", "check-playbooks.mjs never ran", "skill why neither ran"]) {
+  for (const want of ["todolist lacks bug-fix step 1", "deslop has not run", "no-comments has not run", "technical-writing has not run", "skill how never ran", "no driver skill", "not delegated", "check-playbooks.mjs never ran", "skill why neither ran"]) {
     assert.ok(problems.some((p) => p.includes(want)), `missing: ${want}\n${problems.join("\n")}`);
   }
 });
@@ -49,7 +49,7 @@ test("a todolist skip: reason excuses a skippable skill only", () => {
   const withSkip = compliant.replace(/"skill":"why"/, '"skill":"nope"') + "\n" + call("TaskCreate", { subject: "why: skip: new code, no regression history" }, "Task #99 created").join("\n");
   assert.deepEqual(auditTranscript(readTranscript(withSkip), "bug-fix", steps), []);
   const noDeslop = compliant.replace(/"skill":"deslop"/, '"skill":"nope"') + "\n" + call("TaskCreate", { subject: "deslop skip: small" }, "Task #98 created").join("\n");
-  assert.deepEqual(auditTranscript(readTranscript(noDeslop), "bug-fix", steps), ["skill deslop never ran"]);
+  assert.deepEqual(auditTranscript(readTranscript(noDeslop), "bug-fix", steps), ["deslop has not run after the last delegate's work"]);
 });
 
 test("an incomplete step fails", () => {
@@ -91,7 +91,8 @@ test("repair prompt resumes poteto-mode with the audit and forbids history rewri
   const prompt = buildRepairPrompt({ playbook: "bug-fix", url: "https://app.asana.com/0/0/1", branch: "claude/x", slug: "o/r" }, "- skill unslop never ran");
   assert.match(prompt, /^\/pstack:poteto-mode /);
   assert.ok(prompt.includes("- skill unslop never ran"));
-  assert.ok(prompt.includes("repos/o/r/pulls/<number>"));
+  assert.match(prompt, /Rewrite \.audit\/pr-title\.txt and \.audit\/pr-body\.md/);
+  assert.ok(!/gh api -X PATCH/.test(prompt));
   assert.match(prompt, /Never rewrite pushed history/);
 });
 
@@ -123,19 +124,17 @@ test("the Stop hook blocks while gaps remain, up to its limit", () => {
   assert.equal(stopDecision(["skill unslop never ran"], 3), null);
 });
 
-test("merge checks pass only for a clean merge-mode run against a release branch", () => {
+test("merge checks pass only for a clean merge-mode run", () => {
   const ci = mkdtempSync(join(tmpdir(), "routine-"));
   mkdirSync(join(ci, ".audit"));
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   writeFileSync(join(ci, ".audit/review.md"), "PASS\n\nNo high or critical findings.\n");
-  writeFileSync(join(ci, ".audit/comments.md"), "FINDINGS: 0\n");
   const clean = { cwd: ci, mode: "merge", base: "release-2.x", violations: [], findings: ["skill how never ran"], pr: { state: "open", base: "release-2.x" } };
   assert.deepEqual(failedMergeChecks(clean), []);
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "red" }));
   assert.deepEqual(failedMergeChecks(clean), ["CI is green or the repo has none"]);
   writeFileSync(join(ci, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   assert.deepEqual(failedMergeChecks({ ...clean, mode: "pr" }), ["Mode is merge"]);
-  assert.deepEqual(failedMergeChecks({ ...clean, base: "main", pr: { state: "open", base: "main" } }), ["BASE is a release branch"]);
   assert.deepEqual(failedMergeChecks({ ...clean, violations: ["no PR"], pr: null }), ["the gate has no violations", "the PR is open against BASE"]);
 });
 
@@ -153,36 +152,32 @@ test("the review verdict is the first line of review.md, and a missing file fail
   assert.equal(reviewVerdict(join(dir, "review.md")), "FAIL");
 });
 
-test("order findings never block a merge, but outcome findings do", () => {
+test("playbook findings never fail a merge check, but gate violations do", () => {
   const dir = mkdtempSync(join(tmpdir(), "outcome-"));
   mkdirSync(join(dir, ".audit"));
   writeFileSync(join(dir, ".audit/ci.json"), JSON.stringify({ state: "green" }));
   writeFileSync(join(dir, ".audit/review.md"), "PASS\n");
-  writeFileSync(join(dir, ".audit/comments.md"), "FINDINGS: 0\n");
+  writeFileSync(join(dir, ".audit/comments.md"), "FINDINGS: 3\n");
   const ctx = { cwd: dir, mode: "merge", base: "release-2.x", violations: [], pr: { state: "open", base: "release-2.x" } };
-  assert.deepEqual(failedMergeChecks({ ...ctx, findings: ["skill how never ran", "todolist step 3 is pending, not completed"] }), []);
-  assert.deepEqual(failedMergeChecks({ ...ctx, findings: [NO_DRIVER, NOT_DELEGATED] }), ["the change was checked on its real surface", "the code was written by a delegate"]);
+  assert.deepEqual(failedMergeChecks({ ...ctx, findings: ["skill how never ran", "todolist step 3 is pending, not completed", "deslop has not run", NO_DRIVER, NOT_DELEGATED] }), []);
+  assert.deepEqual(failedMergeChecks({ ...ctx, findings: [], violations: ["touches CI config or secrets: .github/x.yml"] }), ["the gate has no violations"]);
 });
 
-test("the PreToolUse hook enforces delegation and skill order", () => {
-  const t = (...skills) => readTranscript([prompt, ...skills.flatMap((skill) => call("Skill", { skill }))].join("\n"));
-  const edit = (path, agent_id) => ({ tool_name: "Edit", tool_input: { file_path: `/w/${path}` }, agent_id });
+test("the PreToolUse hook refuses only merges, trunk pushes and PR writes", () => {
+  const edit = (path) => ({ tool_name: "Edit", tool_input: { file_path: path } });
   const bash = (command, agent_id) => ({ tool_name: "Bash", tool_input: { command }, agent_id });
-  assert.match(preToolDecision(edit("src/tooltip.ts"), t(), "bug-fix", "/w", "release-1.x"), /Delegate this edit/);
-  assert.equal(preToolDecision(edit("src/tooltip.ts", "a1"), t(), "bug-fix", "/w", "release-1.x"), null);
-  assert.equal(preToolDecision(edit("tests/test_tooltip.py"), t(), "bug-fix", "/w", "release-1.x"), null);
-  assert.equal(preToolDecision(edit("CHANGELOG.md"), t(), "bug-fix", "/w", "release-1.x"), null);
-  assert.match(preToolDecision(bash("git commit -m x", "a1"), t(), "feature", "/w", "release-1.x"), /how, architect/);
-  assert.equal(preToolDecision(bash("git commit -m x", "a1"), t("how", "architect"), "feature", "/w", "release-1.x"), null);
-  assert.match(preToolDecision(bash("git add -A && git commit -m x"), t("how"), "bug-fix", "/w", "release-1.x"), /technical-writing, unslop, deslop/);
-  assert.equal(preToolDecision(bash("git commit -m x"), t("how", "pstack:deslop", "technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), null);
-  const editAfterDeslop = readTranscript([prompt, ...["how", "deslop", "technical-writing", "unslop"].flatMap((skill) => call("Skill", { skill })), ...call("Edit", { file_path: "/w/tests/a.py" })].join("\n"));
-  assert.match(preToolDecision(bash("git commit -m x"), editAfterDeslop, "bug-fix", "/w", "release-1.x"), /deslop \(after your last edit\)/);
-  for (const command of ["gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x", "gh api repos/o/r/pulls --input pr.json", "gh api -X PATCH repos/o/r/pulls/3 -f body=x", "gh api --method POST repos/o/r/pulls", "gh pr create --fill"]) {
-    assert.match(preToolDecision(bash(command, "a1"), t("no-comments", "technical-writing", "unslop"), "bug-fix", "/w", "release-1.x"), /routine opens and updates the PR/, command);
+  for (const playbook of ["bug-fix", "feature"]) {
+    assert.equal(preToolDecision(edit("/w/src/tooltip.ts"), playbook, "release-1.x"), null);
+    assert.equal(preToolDecision(edit("/tmp/scratch.js"), playbook, "release-1.x"), null);
+    assert.equal(preToolDecision(edit("/w/.audit/todo.md"), playbook, "release-1.x"), null);
+    assert.equal(preToolDecision(bash("git add -A && git commit -m x"), playbook, "release-1.x"), null);
+    assert.match(preToolDecision(bash("git push origin HEAD:release-1.x"), playbook, "release-1.x"), /routine merges/);
+    assert.match(preToolDecision(bash("gh pr merge 3"), playbook, "release-1.x"), /routine merges/);
   }
-  assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), t(), "bug-fix", "/w", "release-1.x"), null);
-  assert.equal(preToolDecision(edit("src/a.ts"), t(), "investigation", "/w", "release-1.x"), null);
+  for (const command of ["gh api repos/o/r/pulls -f head=b -f base=release-1.x -F body=@x", "gh api repos/o/r/pulls --input pr.json", "gh api -X PATCH repos/o/r/pulls/3 -f body=x", "gh api --method POST repos/o/r/pulls", "gh pr create --fill"]) {
+    for (const agent_id of [undefined, "a1"]) assert.match(preToolDecision(bash(command, agent_id), "bug-fix", "release-1.x"), /routine opens and updates the PR/, command);
+  }
+  assert.equal(preToolDecision(bash("gh api repos/o/r/pulls/3"), "bug-fix", "release-1.x"), null);
 });
 
 test("the prompt names the Playwright browser only where one is installed", () => {
@@ -235,7 +230,7 @@ test("the work session may not merge or push to trunk, lead or subagent, in any 
   for (const command of ["gh api -X PUT repos/o/r/pulls/12/merge", "gh pr merge 12 --merge", "git push origin release-2.x", "git push origin HEAD:release-2.x", "git push -f origin HEAD:refs/heads/main", "git push origin main"]) {
     assert.ok(mergeRefusal(command, "release-2.x"), command);
     for (const agent_id of [undefined, "a1"]) {
-      assert.match(preToolDecision({ tool_name: "Bash", tool_input: { command }, agent_id }, readTranscript(prompt), "investigation", "/w", "release-2.x"), /routine merges/);
+      assert.match(preToolDecision({ tool_name: "Bash", tool_input: { command }, agent_id }, "investigation", "release-2.x"), /routine merges/);
     }
   }
   for (const command of ["git push -u origin claude/fix-tooltip", "gh api repos/o/r/pulls/12", "git push origin claude/release-2.x-fix", "gh api repos/o/r/pulls/12/merged-files"]) {
@@ -251,18 +246,6 @@ test("the PR is ready only when deslop and no-comments ran after the last delega
   assert.deepEqual(prReadiness(seq(delegate, skill("pstack:deslop"), skill("no-comments"), sicko, skill("technical-writing"), skill("unslop"))), []);
   assert.deepEqual(prReadiness(seq(skill("deslop"), skill("no-comments"), delegate, skill("technical-writing"), skill("unslop"))), ["deslop has not run after the last delegate's work", "no-comments has not run after the last delegate's work"]);
   assert.deepEqual(prReadiness(seq(delegate, skill("deslop"), skill("no-comments"))), ["technical-writing has not run", "unslop has not run"]);
-});
-
-test("the comment review blocks a merge until no findings remain", () => {
-  const dir = mkdtempSync(join(tmpdir(), "comments-"));
-  const path = join(dir, "comments.md");
-  assert.equal(commentFindings(path), null);
-  writeFileSync(path, "FINDINGS: 2\n- src/a.ts:3 restates the code\n");
-  assert.equal(commentFindings(path), 2);
-  writeFileSync(path, "FINDINGS: 0\n");
-  assert.equal(commentFindings(path), 0);
-  writeFileSync(path, "No findings.\n");
-  assert.equal(commentFindings(path), null);
 });
 
 test("prepare's checkout never discards uncommitted changes or unpushed commits", () => {

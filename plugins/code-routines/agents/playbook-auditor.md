@@ -12,9 +12,9 @@ Your brief gives a transcript JSONL path, a `.audit/result.md` path, and a playb
 
 Routine facts that change what counts as evidence:
 - `.audit/todo.md` next to `result.md` is the todolist. The routine seeds it with the playbook steps verbatim, so the session need not copy them. A tick there is a claim, like a `result.md` row.
-- `gh pr create` and `gh pr view` are blocked. A `gh api repos/<owner>/<repo>/pulls...` call counts as the same step.
-- The routine gives the session its own fresh checkout on a new branch from origin/BASE. That checkout counts as the Opening a PR worktree. A file-writing delegate still needs its own worktree, through `isolation: "worktree"` or an exclusive branch.
+- The routine opens and updates the PR from `.audit/pr-title.txt` and `.audit/pr-body.md`, and refuses the session's own `gh api` PR writes. The Opening a PR step that opens the PR counts as done when those two files exist next to `result.md`.
+- The routine resets the session's checkout to origin/BASE on the work branch. That checkout counts as the Opening a PR worktree. A file-writing delegate still needs its own worktree, through `isolation: "worktree"` or an exclusive branch.
 - The poteto-mode `SKILL.md` reaches the session through the `/pstack:poteto-mode` prompt. Do not require a Read of it.
 - A command the routine refused (an `is not allowed` or `requires approval` result) is a routine gap, not a skip by the session. Mark that row `blocked by routine` and quote the refused command.
 
-Return `PASS` or `FAIL` on the first line, then a table: `| step | done / skipped / missing | evidence |`. Cite evidence as a tool name and a short quote from its input or output. FAIL when any step is missing or any skip is invalid.
+Return `PASS` or `FAIL` on the first line, then a table: `| step | done / skipped / missing / blocked by routine | evidence |`. Cite evidence as a tool name and a short quote from its input or output. FAIL when any step is missing or any skip is invalid. A `blocked by routine` row does not cause FAIL. The verdict is a report for the ticket and never blocks the PR or the merge.
