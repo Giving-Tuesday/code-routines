@@ -4,7 +4,7 @@ description: Rebuild a chart from an image as a gt-charts example notebook, a .p
 argument-hint: <chart-image> [output.py]
 ---
 
-Rebuild the chart in the image the user shared, or the image at the path in $0, with `gt.chart(...)` only, as a Databricks source notebook. If the user gave an output path in $1, write the notebook there. Otherwise write `notebooks/<chart_type>.py` in a gt-charts checkout, or `<chart_type>.py` anywhere else, with the chart type in snake_case, such as `dumbbell.py`.
+Rebuild the chart in the image the user shared, or the image at the path in $0, with `gt.chart(...)` only, as a Databricks source notebook. Match the chart's function, shapes, and data, not its look. gt-charts and the embed's theme decide colours, fonts, axis lines, ticks, grid lines, sizes, and spacing. If the user gave an output path in $1, write the notebook there. Otherwise write `notebooks/<chart_type>.py` in a gt-charts checkout, or `<chart_type>.py` anywhere else, with the chart type in snake_case, such as `dumbbell.py`.
 
 ## Read gt-charts first
 
@@ -16,14 +16,14 @@ Read these from the `release-2.x` branch of Giving-Tuesday/gt-charts. The defaul
 Read:
 
 - `docs/using-gt-charts.md` for the API, the chart types, and "Building a chart the embed has no type for".
-- `notebooks/*.py` for the notebook format. Start from the example closest to the image. Skip `notebooks/image.py`, which shows PNG export, not a chart.
+- `notebooks/*.py` for the notebook format. Start from the example closest to the image, and copy its structure, not its styling. Skip `notebooks/image.py`, which shows PNG export, not a chart.
 
 If you cannot read the repo, stop and tell the user the skill needs access to Giving-Tuesday/gt-charts.
 
 ## Steps
 
 1. Transcribe the image into the data cell: every category, series, value, and label, plus the title and notes. Compute derived numbers, such as gaps or totals, in code. Then check them against any the image prints. Never invent a value. List each value you read with doubt for the final report.
-2. Use the native series type when the embed has one. Otherwise build the shape from helper series as the docs section describes. Write every formatter as a string template.
+2. Use the native series type when the embed has one. Otherwise build the shape from helper series as the docs section describes. Set only what changes what the chart shows: series types, data, categories, stacking, labels that print values, and reference lines. Leave every style option and the `theme` keyword unset. If the image uses colour to mark groups, make each group its own series, so the theme's palette colours it. Write every formatter as a string template.
 3. Write the notebook in this shape. Databricks imports the file as a plain file unless the first line is exactly `# Databricks notebook source`.
 
    ```python
@@ -49,7 +49,7 @@ If you cannot read the repo, stop and tell the user the skill needs access to Gi
 
    - If it says "the embed rendered nothing", add `--local-bundle`. That option downloads the bundle with `npm`.
    - If Playwright cannot find a browser and Chromium is installed, pass `--chromium <path>`. Otherwise run `playwright install chromium` in the same environment.
-5. View each PNG next to the source image. Compare every value, label, color, legend entry, and axis range. Fix the notebook and render again until they match. A difference the embed causes, such as its fonts, its title layout, or its download button, stays. Report it.
-6. Report the notebook path, the PNG path, the values you read with doubt, and the differences you left with the reason for each. To import the file, the user opens a Databricks workspace folder and chooses **Import**, then **File**.
+5. View each PNG next to the source image. Compare the chart type, the series, every value and label, the legend entries, and any reference lines. Colours, fonts, and spacing will differ from the image, and that is correct. `render.py` prints a `sets style` line for each chart that sets a style key. Remove each key it lists, unless the chart cannot show its data without it, such as a transparent offset bar under a stacked stem. Fix the notebook and render again until the function and data match and every remaining style key has such a reason.
+6. Report the notebook path, the PNG path, the values you read with doubt, each style key you kept with its reason, and any difference in function or data you left with its reason. To import the file, the user opens a Databricks workspace folder and chooses **Import**, then **File**.
 
 If you cannot run Python or a browser here, write the notebook anyway. Tell the user it is unrendered, and list what to check when they run it.
