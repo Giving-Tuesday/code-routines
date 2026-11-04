@@ -129,8 +129,8 @@ export function buildRepairPrompt(s, audit) {
   ].join("\n");
 }
 
-function writeSettings(cwd) {
-  const hook = (name) => ({ hooks: [{ type: "command", command: `node ${ROUTINE} ${name}` }] });
+export function writeSettings(cwd) {
+  const hook = (name) => ({ hooks: [{ type: "command", command: `node ${JSON.stringify(ROUTINE)} ${name} ${JSON.stringify(cwd)}` }] });
   const settings = { hooks: { Stop: [hook("stop-hook")], PreToolUse: [{ matcher: "Bash", ...hook("pre-tool-hook") }] } };
   writeFileSync(join(cwd, SETTINGS), JSON.stringify(settings));
 }

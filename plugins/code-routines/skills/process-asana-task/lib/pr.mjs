@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { prBodyFindings, prReadiness } from "./audit.mjs";
 import { branchPushed, findPr, ghWrite } from "./github.mjs";
 import { opensPr } from "./playbooks.mjs";
-import { readIfExists } from "./shell.mjs";
+import { readIfExists, sh, trySh } from "./shell.mjs";
 import { PR_BODY, PR_TITLE, RESULT, loadState } from "./state.mjs";
 import { NO_TRANSCRIPT, loadTranscript } from "./transcript.mjs";
 
@@ -15,14 +16,24 @@ function prText(cwd, state) {
   const title = nonEmpty(join(cwd, PR_TITLE))?.trim();
   const body = nonEmpty(join(cwd, PR_BODY));
   const result = nonEmpty(join(cwd, RESULT));
+  const fallback = result ?? `Asana task: ${state.url}\n`;
+  const source = result ? RESULT : "a line naming the Asana task";
+  const template = state.prTemplate && readFileSync(join(cwd, state.prTemplate), "utf8");
   return {
     title: title ?? state.name,
-    body: body ?? result ?? `Asana task: ${state.url}\n`,
+    body: body ?? (template ? `${template.trimEnd()}\n\n${fallback}` : fallback),
     findings: [
       ...(title ? [] : [`no ${PR_TITLE}, used the ticket name`]),
-      ...(body ? [] : [`no ${PR_BODY}, used ${result ? RESULT : "a line naming the Asana task"}`]),
+      ...(body ? [] : [`no ${PR_BODY}, used ${template ? `${state.prTemplate} followed by ${source}` : source}`]),
     ],
   };
+}
+
+function pushWork(cwd, { baseSha, branch }) {
+  if (branchPushed(cwd, branch)) return { pushed: true, findings: [] };
+  const committed = sh("git", ["rev-list", `${baseSha}..HEAD`], cwd) !== "";
+  const pushed = committed && trySh("git", ["push", "-q", "origin", `HEAD:refs/heads/${branch}`], cwd) !== null;
+  return { pushed, findings: pushed ? [`the routine pushed ${branch}`] : [] };
 }
 
 export function openPr(cwd) {
@@ -30,12 +41,14 @@ export function openPr(cwd) {
   if (!opensPr(state.playbook)) return { ok: true, skipped: `${state.playbook} opens no PR` };
   const { title, body, findings: defaults } = prText(cwd, state);
   const transcript = loadTranscript(state);
+  const push = pushWork(cwd, state);
   const findings = [
     ...defaults,
+    ...push.findings,
     ...(transcript ? prReadiness(transcript) : [NO_TRANSCRIPT]),
     ...prBodyFindings(cwd, state, body),
   ];
-  if (!branchPushed(cwd, state.branch)) return { ok: false, problems: [`origin/${state.branch} does not match HEAD`], findings };
+  if (!push.pushed) return { ok: false, problems: [`origin/${state.branch} does not match HEAD`], findings };
   const open = findPr(cwd, state, "open");
   const pr = open
     ? ghWrite(cwd, "PATCH", `repos/${state.slug}/pulls/${open.number}`, { title, body })

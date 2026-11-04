@@ -1,18 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { auditGit, auditResult, auditTranscript, gate, prBodyFindings, prReadiness, unreleasedSection, NO_DRIVER, NOT_DELEGATED } from "./lib/audit.mjs";
+import { auditGit, auditResult, auditTranscript, gate, prBodyFindings, prReadiness, unreleasedSection, NO_DRIVER, NO_FIX_AFTER_REPRO, NO_REPRO_FIRST, NOT_DELEGATED } from "./lib/audit.mjs";
 import { findPrTemplate, missingTemplateHeadings, repoSlug } from "./lib/github.mjs";
 import { preToolDecision, stopDecision, stopHook } from "./lib/hooks.mjs";
 import { ciState, failedMergeChecks, reviewVerdict } from "./lib/merge.mjs";
 import { playbookStepsFor, pstackPlaybooks, pstackRoot, seedTodo } from "./lib/playbooks.mjs";
 import { openPr } from "./lib/pr.mjs";
-import { checkoutWorkBranch, ignoreAudit } from "./lib/prepare.mjs";
+import { checkoutWorkBranch, ignoreAudit, prepare } from "./lib/prepare.mjs";
 import { shrinkScreenshot, withScreenshots } from "./lib/screenshots.mjs";
-import { browserFact, buildPrompt, buildRepairPrompt, toolsFor } from "./lib/session.mjs";
+import { browserFact, buildPrompt, buildRepairPrompt, toolsFor, writeSettings } from "./lib/session.mjs";
 import { baseFor, parseTicket, playbookFor } from "./lib/ticket.mjs";
 import { readTranscript, summarizeDenials, transcriptPath } from "./lib/transcript.mjs";
 
@@ -290,7 +291,13 @@ test("the work session may not merge or write to trunk, lead or subagent, in any
     "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA== -f branch=release-2.x",
     "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA== -f 'branch=main'",
     "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA==",
-    "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+    "git push origin HEAD:main;",
+    "git push origin HEAD:main&& echo done",
+    "git push origin HEAD:main|cat",
+    "git push origin main>/dev/null",
+    "(git push origin main)",
+    "git push origin HEAD:heads/release-2.x",
+    "git push origin heads/main",
   ];
   for (const command of refused) {
     for (const agent_id of [undefined, "a1"]) assert.match(decide(command, agent_id) ?? "", /routine merges/, command);
@@ -304,8 +311,12 @@ test("the work session may not merge or write to trunk, lead or subagent, in any
     "gh api repos/o/r/contents/a.txt?ref=main",
     "gh api -X PUT repos/o/r/contents/a.txt -f message=x -f content=eA== -f branch=claude/x",
     "gh api graphql -f query='query { viewer { login } }'",
+    "gh api repos/o/r/pulls/12/merge",
+    "git push origin claude/main-fix;",
   ];
   for (const command of allowed) assert.equal(decide(command), null, command);
+  const mutation = "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'";
+  assert.match(decide(mutation) ?? "", /refuses every GitHub GraphQL mutation/);
 });
 
 test("the work session may not force-push, but may push new commits", () => {
@@ -535,10 +546,93 @@ test("open-pr opens the PR without pr-title.txt or pr-body.md and reports each d
   const written = withEnv(gh.env, () => openPr(work));
   assert.deepEqual([gh.sent().title, gh.sent().body], ["fix(ui): clamp the tooltip", "## Why\nx\n"]);
   assert.ok(!written.findings.some((f) => f.startsWith("no .audit/pr-")), written.findings.join("\n"));
+});
+
+test("open-pr pushes a committed but unpushed branch, and fails only when it cannot", () => {
+  const { root, work, base, state } = pushedWorkBranch();
+  const gh = fakeGh(root);
   writeFileSync(join(work, "c.txt"), "c\n");
   git(work, "add", "c.txt");
   git(work, "commit", "-qm", "unpushed");
+  const pushed = withEnv(gh.env, () => openPr(work));
+  assert.equal(pushed.ok, true);
+  assert.ok(pushed.findings.includes("the routine pushed claude/t"), pushed.findings.join("\n"));
+  assert.equal(git(work, "ls-remote", "origin", "refs/heads/claude/t").split("\t")[0], git(work, "rev-parse", "HEAD"));
+  const diverged = git(work, "commit-tree", "HEAD^{tree}", "-p", base, "-m", "elsewhere");
+  git(work, "push", "-q", "-f", "origin", `${diverged}:refs/heads/claude/t`);
   assert.deepEqual(withEnv(gh.env, () => openPr(work)).problems, [`origin/${state.branch} does not match HEAD`]);
+  git(work, "reset", "-q", "--hard", base);
+  assert.deepEqual(withEnv(gh.env, () => openPr(work)).problems, [`origin/${state.branch} does not match HEAD`]);
+});
+
+test("open-pr with no pr-body.md fills the repo's PR template", () => {
+  const { root, work, state } = pushedWorkBranch();
+  const gh = fakeGh(root);
+  writeFileSync(join(work, "tpl.md"), "## Summary\n\n## Test plan\n");
+  writeFileSync(join(work, ".audit/routine.json"), JSON.stringify({ ...state, prTemplate: "tpl.md" }));
+  const out = withEnv(gh.env, () => openPr(work));
+  assert.equal(gh.sent().body, "## Summary\n\n## Test plan\n\nAsana task: https://app.asana.com/0/0/1\n");
+  assert.ok(out.findings.includes("no .audit/pr-body.md, used tpl.md followed by a line naming the Asana task"), out.findings.join("\n"));
+  assert.ok(!out.findings.some((f) => f.startsWith("PR body lacks")), out.findings.join("\n"));
+});
+
+const ROUTINE = join(dirname(fileURLToPath(import.meta.url)), "routine.mjs");
+
+test("a GitHub API failure in open-pr or attach-screenshots is a problem, not a crash", () => {
+  const { root, work } = pushedWorkBranch();
+  const { env } = fakeGh(root);
+  const pr = '[{"number":1,"html_url":"https://github.com/o/r/pull/1","body":""}]';
+  writeFileSync(join(root, "bin/gh"), `#!/bin/sh\ncase "$*" in\n  *--input*) echo 'gh: Validation Failed (HTTP 422)' >&2; exit 1 ;;\n  *state=open*) echo '${pr}' ;;\n  *) echo '[]' ;;\nesac\n`);
+  writeFileSync(join(work, ".audit/after.png"), "png");
+  for (const command of ["open-pr", "attach-screenshots"]) {
+    const out = spawnSync("node", [ROUTINE, command], { cwd: work, encoding: "utf8", env: { ...process.env, ...env } });
+    assert.equal(out.status, 1, command);
+    assert.doesNotMatch(out.stderr, /\bat /, command);
+    const { ok, problems } = JSON.parse(out.stdout);
+    assert.equal(ok, false, command);
+    assert.match(problems.join("\n"), /HTTP 422/, command);
+  }
+});
+
+test("the PreToolUse hook checks the checkout it was given from any directory, and refuses when it cannot", () => {
+  const { work } = pushedWorkBranch();
+  writeSettings(work);
+  const command = JSON.parse(readFileSync(join(work, ".audit/settings.json"), "utf8")).hooks.PreToolUse[0].hooks[0].command;
+  const elsewhere = mkdtempSync(join(tmpdir(), "elsewhere-"));
+  const hook = (cmd, bash) => spawnSync("sh", ["-c", cmd], { cwd: elsewhere, encoding: "utf8", input: JSON.stringify({ tool_name: "Bash", tool_input: { command: bash } }) });
+  const decision = (out) => JSON.parse(out.stdout || "null")?.hookSpecificOutput;
+  assert.equal(hook(command, "git status").stdout, "");
+  assert.equal(hook(command, "git status").status, 0);
+  assert.match(decision(hook(command, "gh pr merge 1")).permissionDecisionReason, /routine merges/);
+  const lost = hook(`node ${ROUTINE} pre-tool-hook ${join(elsewhere, "missing")}`, "git status");
+  assert.equal(lost.status, 0);
+  assert.equal(decision(lost).permissionDecision, "deny");
+  assert.match(decision(lost).permissionDecisionReason, /cannot check this command/);
+});
+
+test("prepare clears an earlier ticket's .audit files once the checkout is safe to move", () => {
+  const { work } = workRepo();
+  mkdirSync(join(work, ".audit/shrunk"), { recursive: true });
+  const ticket = { gid: "7", url: "u", name: "n", text: "t", fields: { Repo: "r", Type: "Feature", Mode: "pr", "Fix target": "f", "Release version": "2.0" } };
+  writeFileSync(join(work, ".audit/ticket.json"), JSON.stringify(ticket));
+  for (const f of ["pr-title.txt", "pr-body.md", "result.md", "old.png", "review.md", "ci.json", "shrunk/old.png"]) writeFileSync(join(work, ".audit", f), "stale");
+  writeFileSync(join(work, "a.txt"), "edited\n");
+  assert.equal(prepare(join(work, ".audit/ticket.json"), work).ok, false);
+  assert.ok(existsSync(join(work, ".audit/pr-body.md")));
+  git(work, "checkout", "-q", "a.txt");
+  assert.equal(prepare(join(work, ".audit/ticket.json"), work).ok, true);
+  assert.deepEqual(readdirSync(join(work, ".audit")).sort(), ["routine.json", "ticket.json", "todo.md"]);
+});
+
+test("the Stop hook does not ask for repro-commit fixes that need a history rewrite", () => {
+  const { root, work, state } = pushedWorkBranch();
+  const gh = fakeGh(root);
+  writeFileSync(join(work, ".audit/routine.json"), JSON.stringify({ ...state, playbook: "bug-fix" }));
+  const { findings } = withEnv(gh.env, () => gate(work));
+  assert.ok(findings.includes(NO_REPRO_FIRST) && findings.includes(NO_FIX_AFTER_REPRO), findings.join("\n"));
+  const reason = withEnv(gh.env, () => stopHook(work))?.reason ?? "";
+  assert.match(reason, /no transcript/);
+  assert.ok(!reason.includes(NO_REPRO_FIRST) && !reason.includes(NO_FIX_AFTER_REPRO), reason);
 });
 
 test("permission refusals are reported apart from findings and never reach the Stop hook", () => {

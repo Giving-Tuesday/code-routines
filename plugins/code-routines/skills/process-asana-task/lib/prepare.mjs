@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { findPrTemplate, repoSlug } from "./github.mjs";
@@ -30,6 +30,12 @@ export function ignoreAudit(cwd) {
   appendFileSync(exclude, `\n${AUDIT_DIR}/\n`);
 }
 
+function clearAudit(cwd) {
+  const dir = join(cwd, AUDIT_DIR);
+  mkdirSync(dir, { recursive: true });
+  for (const f of readdirSync(dir).filter((f) => f !== "ticket.json")) rmSync(join(dir, f), { recursive: true });
+}
+
 function workBranch(cwd, gid) {
   const current = sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   return process.env.ROUTINE_BRANCH || (current.startsWith("claude/") ? current : `claude/asana-${gid}`);
@@ -45,7 +51,7 @@ export function prepare(ticketPath, cwd) {
   }
   const checkout = checkoutWorkBranch(cwd, branch, parsed.base);
   if (checkout.length) return { ok: false, problems: checkout };
-  mkdirSync(join(cwd, AUDIT_DIR), { recursive: true });
+  clearAudit(cwd);
   ignoreAudit(cwd);
   const toolchains = TOOLCHAINS.filter((t) => existsSync(join(cwd, t.lock)));
   for (const { install } of toolchains) {
