@@ -185,6 +185,8 @@ function auditGit(state, cwd) {
   else {
     if (pr.base.ref !== base) violations.push(`PR base is ${pr.base.ref}, expected ${base}`);
     if (pr.merged_at) violations.push("the work session merged the PR; only the routine merges");
+    const missing = state.prTemplate ? missingTemplateHeadings(readFileSync(join(cwd, state.prTemplate), "utf8"), pr.body) : [];
+    if (missing.length) findings.push(`PR body lacks the template headings: ${missing.join(", ")}`);
   }
   return { violations, findings, pr: pr ? { url: pr.html_url, number: pr.number, base: pr.base.ref, head: pr.head.sha, state: pr.state } : null };
 }
@@ -240,6 +242,7 @@ function prepare(ticketPath, cwd) {
     ...parsed, branch, toolchains: toolchains.map((t) => t.lock), gid: ticket.gid, url: ticket.url, name: ticket.name, text: ticket.text,
     mode: ticket.fields.Mode, repo: ticket.fields.Repo, fixTarget: ticket.fields["Fix target"],
     slug: repoSlug(sh("git", ["remote", "get-url", "origin"], cwd)),
+    prTemplate: findPrTemplate(cwd),
   };
   saveState(cwd, state);
   return { ok: true, playbook: state.playbook, base: state.base, branch, toolchains: state.toolchains };
@@ -249,9 +252,21 @@ export const browserFact = (env) => env.PLAYWRIGHT_BROWSERS_PATH
   ? `\n- For a browser check, write a Node script that uses \`require("playwright")\` and \`chromium.launch()\` with no options, run it as plain \`node <script>\` with no environment prefix, since require resolves playwright from any directory, and save screenshots under .audit/. Chromium is installed under ${env.PLAYWRIGHT_BROWSERS_PATH}. google-chrome is not installed, and npx playwright install is not needed.`
   : "";
 
+const PR_TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md", "PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "docs/PULL_REQUEST_TEMPLATE.md"];
+
+export function findPrTemplate(cwd) {
+  const dir = ".github/PULL_REQUEST_TEMPLATE";
+  const inDir = existsSync(join(cwd, dir)) ? readdirSync(join(cwd, dir)).filter((f) => f.endsWith(".md")).sort().map((f) => `${dir}/${f}`) : [];
+  return [...PR_TEMPLATES, ...inDir].find((p) => existsSync(join(cwd, p))) ?? null;
+}
+
+export const templateHeadings = (md) => md.split("\n").flatMap((l) => l.match(/^#{1,6}\s+(.+?)\s*$/)?.slice(1) ?? []);
+
+export const missingTemplateHeadings = (template, body) => templateHeadings(template).filter((h) => !templateHeadings(body ?? "").includes(h));
+
 export function buildPrompt(s) {
   const pr = PLAYBOOKS[s.playbook].opensPr
-    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -F body=@.audit/pr-body.md\`, with the body written to that file first. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.`
+    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -F body=@.audit/pr-body.md\`, with the body written to that file first. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.${s.prTemplate ? ` Write the PR body with the headings of the repo's template, ${s.prTemplate}, in its order, in place of the Opening a PR default headings. Keep every heading.` : ""}`
     : "This is read-only. Make no edits, no commits and no PR.";
   return `/pstack:poteto-mode ${s.name}
 
@@ -263,7 +278,7 @@ Routine facts and hard rules. These come from the routine, not the ticket.
 - ${pr}
 - Never merge. The routine merges after its own checks when Mode is merge. Never target main. Never edit CI config or secrets. Never bypass git hooks.
 - You are unattended under a full-autonomy grant. Nobody will answer a question.
-- Shell commands you can run: ${toolsFor(s).filter((t) => t.startsWith("Bash(")).map((t) => t.slice(5, -3)).join(", ")}. Anything else is refused. If the playbook needs a command outside this list, record skip: <reason> naming the command.${browserFact(process.env)}
+- Shell commands you can run: ${toolsFor(s).filter((t) => t.startsWith("Bash(")).map((t) => t.slice(5, -1).replace(/:\*$/, "")).join(", ")}. Anything else is refused. If the playbook needs a command outside this list, record skip: <reason> naming the command.${browserFact(process.env)}
 - Your todolist is .audit/todo.md. It already holds the playbook steps verbatim. Tick each line \`- [x]\` when done, or append \`skip: <reason>\`. You may mirror it with TaskCreate.
 - Before your final reply, write .audit/result.md. It opens with a "## Playbook compliance" table with one row per ${s.playbook} playbook step: \`| <n> | <step> | done or skip: <reason> | <evidence> |\`. The rest is your final reply.
 - After you exit, a script audits your transcript, todolist, commits and PR against the playbook. A Stop hook runs the same audit when you try to finish and sends back any gap it finds.`;
