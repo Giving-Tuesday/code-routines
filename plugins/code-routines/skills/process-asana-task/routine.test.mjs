@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
+const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
 let n = 0;
@@ -213,4 +215,14 @@ test("screenshots go under the template's Screenshots heading, once, however oft
   const templated = withScreenshots("## Summary\nx\n\n### Screenshots\n\n## Test plan\ny", img);
   assert.match(templated, /### Screenshots\n\n<!-- routine-screenshots -->\n!\[after\.png\][^\n]*\n<!-- \/routine-screenshots -->\n\n## Test plan/);
   assert.equal((templated.match(/## Screenshots/g) ?? []).length, 1);
+});
+
+test("screenshots shrink to at most 1280 px wide before upload", { skip: !trySpawn("convert") }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "shrink-"));
+  const big = join(dir, "big.png");
+  execFileSync("convert", ["-size", "2560x1600", "gradient:#3b82f6-#1e3a8a", big]);
+  const small = shrinkScreenshot(big, join(dir, "out"));
+  assert.notEqual(small, big);
+  assert.equal(execFileSync("identify", ["-format", "%w", small], { encoding: "utf8" }), "1280");
+  assert.ok(statSync(small).size < statSync(big).size);
 });
