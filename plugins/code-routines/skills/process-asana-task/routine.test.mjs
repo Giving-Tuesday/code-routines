@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -203,4 +203,14 @@ test("the repo's PR template is found and its headings are checked in the PR bod
   const prompt = buildPrompt({ playbook: "bug-fix", base: "release-1.x", slug: "o/r", branch: "b", toolchains: [], prTemplate: ".github/pull_request_template.md", name: "n", text: "t", url: "u", repo: "r", mode: "pr", fixTarget: "f" });
   assert.match(prompt, /headings of the repo's template, \.github\/pull_request_template\.md/);
   assert.match(prompt, /mkdir, echo, printf, cd, pwd, wc/);
+});
+
+test("screenshots go under the template's Screenshots heading, once, however often attached", () => {
+  const img = [{ name: "after.png", url: "https://github.com/o/r/blob/abc/b/after.png?raw=true" }];
+  const appended = withScreenshots("## Why\nFix.", img);
+  assert.match(appended, /## Why\nFix\.\n\n## Screenshots\n\n<!-- routine-screenshots -->\n!\[after\.png\]\(https:\/\/github\.com\/o\/r\/blob\/abc\/b\/after\.png\?raw=true\)/);
+  assert.equal(withScreenshots(appended, img), appended);
+  const templated = withScreenshots("## Summary\nx\n\n### Screenshots\n\n## Test plan\ny", img);
+  assert.match(templated, /### Screenshots\n\n<!-- routine-screenshots -->\n!\[after\.png\][^\n]*\n<!-- \/routine-screenshots -->\n\n## Test plan/);
+  assert.equal((templated.match(/## Screenshots/g) ?? []).length, 1);
 });
