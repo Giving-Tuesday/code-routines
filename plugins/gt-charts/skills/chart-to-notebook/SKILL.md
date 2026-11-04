@@ -4,11 +4,16 @@ description: Rebuild a chart from an image as a gt-charts example notebook, a .p
 argument-hint: <chart-image> [output.py]
 ---
 
-Rebuild the chart in image $0 with `gt.chart(...)` only, as a Databricks source notebook. Write it to $1 if given. Otherwise write `notebooks/<chart_type>.py` in a gt-charts checkout, or `<chart_type>.py` anywhere else, with the chart type in snake_case, such as `dumbbell.py`.
+Rebuild the chart in the image the user shared, or the image at the path in $0, with `gt.chart(...)` only, as a Databricks source notebook. If the user gave an output path in $1, write the notebook there. Otherwise write `notebooks/<chart_type>.py` in a gt-charts checkout, or `<chart_type>.py` anywhere else, with the chart type in snake_case, such as `dumbbell.py`.
 
 ## Read gt-charts first
 
-Read these from Giving-Tuesday/gt-charts. In a local checkout, read its working tree. Otherwise read `release-2.x` with `gh api -H "Accept: application/vnd.github.raw" "repos/Giving-Tuesday/gt-charts/contents/<path>?ref=release-2.x"`.
+Read these from the `release-2.x` branch of Giving-Tuesday/gt-charts. The default branch holds the 1.x docs and no examples.
+
+- In a local checkout, run `git fetch origin release-2.x:refs/remotes/origin/release-2.x`, then `git show origin/release-2.x:<path>`. List the examples with `git ls-tree --name-only origin/release-2.x notebooks/`.
+- Otherwise, run `gh api -H "Accept: application/vnd.github.raw" "repos/Giving-Tuesday/gt-charts/contents/<path>?ref=release-2.x"`. List the examples with `gh api "repos/Giving-Tuesday/gt-charts/contents/notebooks?ref=release-2.x" --jq '.[].path'`.
+
+Read:
 
 - `docs/using-gt-charts.md` for the API, the chart types, and "Building a chart the embed has no type for".
 - `notebooks/*.py` for the notebook format. Start from the example closest to the image.

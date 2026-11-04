@@ -1,5 +1,8 @@
-"""Install the gt-charts version the notebook targets: it pins the gt-embed
-bundle the charts load, the same one they load in Databricks."""
+"""Run a notebook, screenshot each chart it shows, and fail on any chart the
+embed did not draw.
+
+Install the gt-charts version the notebook targets: it pins the gt-embed bundle
+the charts load, the same one they load in Databricks."""
 
 import argparse
 import asyncio
@@ -69,8 +72,12 @@ async def screenshot(docs, out_dir: Path, stem: str, chromium: str | None) -> li
             await page.wait_for_timeout(1500)
             path = out_dir / f"{stem}-{n}.png"
             await page.screenshot(path=path, full_page=True)
+            alert = page.locator("section [role=alert]")
+            if await alert.count():
+                errors.append(f"the embed shows: {await alert.first.inner_text()}")
             if not await page.locator("section canvas, section svg").count():
                 errors.append("the embed rendered nothing (bundle not loaded?)")
+            await page.close()
             if errors:
                 problems.append(f"chart {n} failed, screenshot {path}: {errors[0]}")
             else:
