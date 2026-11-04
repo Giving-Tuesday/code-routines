@@ -1,13 +1,5 @@
-"""Render every chart a Databricks .py notebook shows to a PNG.
-
-Run it with the gt-charts version the notebook targets installed, so the chart
-loads the same gt-embed bundle it would load in Databricks.
-
-    python render.py NOTEBOOK.py [--out-dir DIR] [--local-bundle] [--chromium PATH]
-
-Prints one PNG path per chart. Exits 1 when the notebook shows no chart, a page
-throws, or a chart draws nothing.
-"""
+"""Install the gt-charts version the notebook targets: it pins the gt-embed
+bundle the charts load, the same one they load in Databricks."""
 
 import argparse
 import asyncio
@@ -36,8 +28,7 @@ class _CORSHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def serve_local_bundle() -> str:
-    """Download the pinned gt-embed from npm and serve it, for browsers that cannot reach the CDN."""
+def serve_npm_bundle() -> str:
     match = re.search(r"gt-embed@([^/]+)", bundle_url())
     if not match:
         sys.exit(f"cannot read a gt-embed version from bundle URL {bundle_url()}")
@@ -96,7 +87,7 @@ def main():
     args = parser.parse_args()
 
     if args.local_bundle:
-        os.environ["GT_CHARTS_BUNDLE_URL"] = serve_local_bundle()
+        os.environ["GT_CHARTS_BUNDLE_URL"] = serve_npm_bundle()
     docs = capture_documents(args.notebook)
     if not docs:
         sys.exit("the notebook shows no chart; end each chart with .show()")
