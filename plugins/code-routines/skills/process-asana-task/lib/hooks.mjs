@@ -8,7 +8,7 @@ import { PR_BODY, PR_TITLE, STOP_COUNT, TODO, loadState } from "./state.mjs";
 const STOP_HOOK_LIMIT = 3;
 const GIT_PUSH = String.raw`\bgit(\s+(-[Cc]|--(git-dir|work-tree|namespace|config-env))\s+\S+|\s+-{1,2}[^\s-]\S*)*\s+push\b[^;&|]*`;
 const FORCE_PUSH = new RegExp(`${GIT_PUSH}\\s(-[a-zA-Z]*f[a-zA-Z]*|--force\\S*|\\+\\S+)(\\s|$)`);
-const API_WRITE = String.raw`(?=.*\s(-X[\s=]*(POST|PATCH|PUT|DELETE)|--method[\s=]+(POST|PATCH|PUT|DELETE)|-[fF]|--field\b|--raw-field\b|--input\b))`;
+const API_WRITE = String.raw`(?=.*\s(-X[\s=]*(POST|PATCH|PUT|DELETE|post|patch|put|delete)|--method[\s=]+(POST|PATCH|PUT|DELETE|post|patch|put|delete)|-[fF](\s|[^\s=]*=)|--field\b|--raw-field\b|--input\b))`;
 const GH_API = String.raw`\bgh\s+api\b`;
 const PR_API_WRITE = new RegExp(String.raw`${GH_API}(?=.*\/pulls\b)${API_WRITE}`);
 const PR_CLI_WRITE = /\bgh\s+pr\s+(create|edit)\b/;
@@ -18,7 +18,7 @@ const MERGES_WRITE = new RegExp(String.raw`${GH_API}(?=.*\/merges(\s|$))${API_WR
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function trunkWrite(command, base) {
-  const trunk = `(${escapeRe(base)}|main|master)(?=[\\s;&|>)?]|$)`;
+  const trunk = `(${escapeRe(base)}|main|master)(?=[\\s;&|>)?#]|$)`;
   const pushToTrunk = new RegExp(`${GIT_PUSH}\\s(\\S*:)?((refs/)?heads/)?${trunk}`);
   const refWrite = new RegExp(`${GH_API}(?=.*/git/refs/heads/${trunk})${API_WRITE}`);
   const contentsWrite = new RegExp(`${GH_API}(?=.*/contents/)(?=.*\\bbranch=${trunk}|(?!.*\\bbranch=))${API_WRITE}`);
