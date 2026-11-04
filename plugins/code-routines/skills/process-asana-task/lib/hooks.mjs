@@ -8,14 +8,18 @@ import { REFUSED } from "./transcript.mjs";
 
 const STOP_HOOK_LIMIT = 3;
 const MERGE_CALL = /\bgh\s+api\b.*\/pulls\/\d+\/merge\b|\bgh\s+pr\s+merge\b/;
-const PR_API_WRITE =
-  /\bgh\s+api\b(?=.*\/pulls\b)(?=.*\s(-X\s*(POST|PATCH|PUT)|--method\s+(POST|PATCH|PUT)|-f\s|-F\s|--field\b|--raw-field\b|--input\b))/;
+const GIT_PUSH = String.raw`\bgit(\s+-[Cc]\s+\S+)*\s+push\b[^;&|]*`;
+const FORCE_PUSH = new RegExp(`${GIT_PUSH}\\s(-f|--force\\S*|\\+\\S+)(\\s|$)`);
+const API_WRITE = String.raw`(?=.*\s(-X\s*(POST|PATCH|PUT|DELETE)|--method\s+(POST|PATCH|PUT|DELETE)|-f\s|-F\s|--field\b|--raw-field\b|--input\b))`;
+const PR_API_WRITE = new RegExp(String.raw`\bgh\s+api\b(?=.*\/pulls\b)${API_WRITE}`);
 const PR_CLI_WRITE = /\bgh\s+pr\s+(create|edit)\b/;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function mergeRefusal(command, base) {
-  const pushToTrunk = new RegExp(`\\bgit\\s+push\\b[^;&|]*\\s(\\S*:)?(refs/heads/)?(${escapeRe(base)}|main|master)(\\s|$)`);
-  return MERGE_CALL.test(command) || pushToTrunk.test(command)
+  const trunk = `(${escapeRe(base)}|main|master)`;
+  const pushToTrunk = new RegExp(`${GIT_PUSH}\\s(\\S*:)?(refs/heads/)?${trunk}(\\s|$)`);
+  const refWrite = new RegExp(`\\bgh\\s+api\\b(?=.*/git/refs/heads/${trunk}\\b)${API_WRITE}`);
+  return MERGE_CALL.test(command) || pushToTrunk.test(command) || refWrite.test(command)
     ? "Never merge or push to the base branch. The routine merges this PR after its own checks pass."
     : null;
 }
@@ -25,6 +29,7 @@ export function preToolDecision(call, playbook, base) {
   const command = String(call.tool_input.command);
   const refusal = mergeRefusal(command, base);
   if (refusal) return refusal;
+  if (FORCE_PUSH.test(command)) return "Never rewrite pushed history: no force-push. Add a new commit instead.";
   if (PLAYBOOKS[playbook].opensPr && (PR_API_WRITE.test(command) || PR_CLI_WRITE.test(command))) {
     return "The routine opens and updates the PR. Write .audit/pr-title.txt and .audit/pr-body.md instead.";
   }

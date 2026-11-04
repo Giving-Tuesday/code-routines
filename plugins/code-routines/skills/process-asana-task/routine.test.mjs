@@ -237,15 +237,23 @@ test("screenshots shrink to at most 1280 px wide before upload", { skip: !trySpa
 });
 
 test("the work session may not merge or push to trunk, lead or subagent, in any playbook", () => {
-  for (const command of ["gh api -X PUT repos/o/r/pulls/12/merge", "gh pr merge 12 --merge", "git push origin release-2.x", "git push origin HEAD:release-2.x", "git push -f origin HEAD:refs/heads/main", "git push origin main"]) {
+  for (const command of ["gh api -X PUT repos/o/r/pulls/12/merge", "gh pr merge 12 --merge", "git push origin release-2.x", "git push origin HEAD:release-2.x", "git push -f origin HEAD:refs/heads/main", "git push origin main", "git -C /w push origin HEAD:release-2.x", "gh api -X PATCH repos/o/r/git/refs/heads/release-2.x -f sha=abc"]) {
     assert.ok(mergeRefusal(command, "release-2.x"), command);
     for (const agent_id of [undefined, "a1"]) {
       assert.match(preToolDecision({ tool_name: "Bash", tool_input: { command }, agent_id }, "investigation", "release-2.x"), /routine merges/);
     }
   }
-  for (const command of ["git push -u origin claude/fix-tooltip", "gh api repos/o/r/pulls/12", "git push origin claude/release-2.x-fix", "gh api repos/o/r/pulls/12/merged-files"]) {
+  for (const command of ["git push -u origin claude/fix-tooltip", "gh api repos/o/r/pulls/12", "git push origin claude/release-2.x-fix", "gh api repos/o/r/pulls/12/merged-files", "gh api repos/o/r/git/refs/heads/release-2.x"]) {
     assert.equal(mergeRefusal(command, "release-2.x"), null, command);
   }
+});
+
+test("the work session may not force-push, but may push new commits", () => {
+  const decide = (command) => preToolDecision({ tool_name: "Bash", tool_input: { command } }, "bug-fix", "release-2.x");
+  for (const command of ["git push --force origin claude/x", "git push -f origin claude/x", "git push --force-with-lease origin claude/x", "git push origin +claude/x"]) {
+    assert.match(decide(command), /Never rewrite pushed history/, command);
+  }
+  for (const command of ["git push -u origin claude/x", 'git commit -m "push -f"']) assert.equal(decide(command), null, command);
 });
 
 test("the PR is ready only when deslop and no-comments ran after the last delegate", () => {
@@ -324,11 +332,11 @@ test("check-playbooks.mjs is required only when the repo has project playbooks",
 test("a worktree, or a checkout with no info/exclude, still gets .audit/ ignored", () => {
   const { root, work } = workRepo();
   rmSync(join(work, ".git/info/exclude"), { force: true });
-  ignoreAudit(work);
-  ignoreAudit(work);
-  assert.equal(readFileSync(join(work, ".git/info/exclude"), "utf8").split(".audit/").length, 2);
   const tree = join(root, "tree");
   git(work, "worktree", "add", "-q", "-b", "wt", tree);
+  ignoreAudit(tree);
+  ignoreAudit(tree);
+  assert.equal(readFileSync(join(work, ".git/info/exclude"), "utf8").split(".audit/").length, 2);
   mkdirSync(join(tree, ".audit"));
   writeFileSync(join(tree, ".audit/x"), "x");
   assert.doesNotMatch(git(tree, "status", "--porcelain", "--untracked-files=all"), /\.audit/);
@@ -346,7 +354,7 @@ test("env files are forbidden at any depth and CI dirs only at the root", () => 
   git(work, "switch", "-q", "-c", "claude/t");
   mkdirSync(join(work, "apps/web"), { recursive: true });
   mkdirSync(join(work, "docs/.github"), { recursive: true });
-  for (const f of ["apps/web/.env", "apps/web/.env.local", ".circleci/c.yml", "docs/.github/n.md", "apps/web/env.ts"]) {
+  for (const f of ["apps/web/.env", "apps/web/.env.local", ".circleci/c.yml", "docs/.github/n.md", "apps/web/env.ts", "apps/web/.env.example", "src/.environment.ts"]) {
     mkdirSync(join(work, f, ".."), { recursive: true });
     writeFileSync(join(work, f), "x\n");
   }
@@ -382,7 +390,7 @@ test("a denial with neither a command nor a tool name is still summarized", () =
   assert.equal(summarizeDenials([JSON.stringify({ permission_denials: [{}] })]).length, 1);
 });
 
-test("the PR body is checked against the template before and after the PR opens", () => {
+test("the PR body is checked against the template, from pr-body.md before the PR opens", () => {
   const { work, base } = workRepo();
   git(work, "switch", "-q", "-c", "claude/t");
   writeFileSync(join(work, "b.txt"), "b\n");
