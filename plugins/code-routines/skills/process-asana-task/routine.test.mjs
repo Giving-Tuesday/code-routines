@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, statSync, readFileSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, buildPrompt, commentFindings, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, buildPrompt, checkoutWorkBranch, commentFindings, mergeRefusal, prReadiness, shrinkScreenshot, withScreenshots, findPrTemplate, missingTemplateHeadings, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const trySpawn = (cmd) => spawnSync(cmd, ["-version"]).status === 0;
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
@@ -263,4 +263,39 @@ test("the comment review blocks a merge until no findings remain", () => {
   assert.equal(commentFindings(path), 0);
   writeFileSync(path, "No findings.\n");
   assert.equal(commentFindings(path), null);
+});
+
+test("prepare's checkout never discards uncommitted changes or unpushed commits", () => {
+  const root = mkdtempSync(join(tmpdir(), "checkout-"));
+  const git = (cwd, ...args) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  git(root, "init", "-q", "--bare", "origin.git");
+  git(root, "init", "-q", "-b", "main", "work");
+  const work = join(root, "work");
+  writeFileSync(join(work, "a.txt"), "a\n");
+  git(work, "add", "a.txt");
+  git(work, "commit", "-qm", "base");
+  git(work, "remote", "add", "origin", join(root, "origin.git"));
+  git(work, "push", "-q", "origin", "main:release-2.x", "main:main");
+  git(work, "fetch", "-q", "origin");
+  git(work, "switch", "-q", "-c", "claude/session");
+  mkdirSync(join(work, ".audit"));
+  writeFileSync(join(work, ".audit/ticket.json"), "{}");
+
+  writeFileSync(join(work, "a.txt"), "edited\n");
+  assert.match(checkoutWorkBranch(work, "claude/session", "release-2.x")[0], /uncommitted changes.*a\.txt/);
+  assert.equal(readFileSync(join(work, "a.txt"), "utf8"), "edited\n");
+  git(work, "checkout", "-q", "a.txt");
+
+  writeFileSync(join(work, "b.txt"), "b\n");
+  git(work, "add", "b.txt");
+  git(work, "commit", "-qm", "local only");
+  assert.match(checkoutWorkBranch(work, "claude/session", "release-2.x")[0], /commits that are on no remote/);
+  assert.ok(existsSync(join(work, "b.txt")));
+
+  git(work, "push", "-q", "origin", "claude/session");
+  assert.deepEqual(checkoutWorkBranch(work, "claude/session", "release-2.x"), []);
+  assert.equal(git(work, "rev-parse", "HEAD"), git(work, "rev-parse", "origin/release-2.x"));
+  assert.ok(existsSync(join(work, ".audit/ticket.json")));
+  assert.deepEqual(checkoutWorkBranch(work, "claude/asana-1", "release-2.x"), []);
+  assert.equal(git(work, "rev-parse", "--abbrev-ref", "HEAD"), "claude/asana-1");
 });

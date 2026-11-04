@@ -286,17 +286,27 @@ export function seedTodo(playbook, steps) {
   return [`# ${playbook} todolist`, "", ...steps.map((s) => `- [ ] ${s.n}. ${s.text}`), ...opening.map((o) => `- [ ] ${o}`), ""].join("\n");
 }
 
+export function checkoutWorkBranch(cwd, branch, base) {
+  const dirty = sh("git", ["status", "--porcelain", "--untracked-files=all"], cwd).split("\n").map((l) => l.replace(/^\s*\S+\s+/, "")).filter((p) => p && !p.startsWith(".audit/"));
+  if (dirty.length) return [`the checkout has uncommitted changes, so the routine will not touch it: ${dirty.join(", ")}`];
+  if (trySh("git", ["rev-parse", "--verify", `refs/heads/${branch}`], cwd)) {
+    const unpushed = sh("git", ["rev-list", branch, "--not", "--remotes"], cwd);
+    if (unpushed) return [`${branch} has commits that are on no remote, so the routine will not move it`];
+  }
+  sh("git", ["switch", "--no-track", "-C", branch, `origin/${base}`], cwd);
+  return [];
+}
+
 function prepare(ticketPath, cwd) {
   const ticket = JSON.parse(readFileSync(ticketPath, "utf8"));
   const parsed = parseTicket(ticket);
   if (parsed.error) return { ok: false, problems: [parsed.error] };
   const current = sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   const branch = process.env.ROUTINE_BRANCH || (current.startsWith("claude/") ? current : `claude/asana-${ticket.gid}`);
-  sh("git", ["fetch", "--all", "--tags"], cwd);
+  sh("git", ["fetch", "origin", "--tags"], cwd);
   if (!trySh("git", ["rev-parse", "--verify", `origin/${parsed.base}`], cwd)) return { ok: false, problems: [`${parsed.base} is not on origin`] };
-  sh("git", ["reset", "--hard"], cwd);
-  sh("git", ["clean", "-fd", "-e", ".audit"], cwd);
-  sh("git", ["checkout", "--no-track", "-B", branch,`origin/${parsed.base}`], cwd);
+  const checkout = checkoutWorkBranch(cwd, branch, parsed.base);
+  if (checkout.length) return { ok: false, problems: checkout };
   mkdirSync(join(cwd, ".audit"), { recursive: true });
   const exclude = join(cwd, ".git/info/exclude");
   if (!readFileSync(exclude, "utf8").includes(".audit/")) appendFileSync(exclude, "\n.audit/\n");
