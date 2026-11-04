@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
+import { PR_BODY, PR_TITLE } from "./state.mjs";
 
 export const PLAYBOOKS = {
   "bug-fix": { opensPr: true, driver: true, delegate: true, skills: ["how"], skippable: ["why", "tdd"] },
@@ -62,7 +63,7 @@ const OPENING_A_PR = [
   "Opening a PR: run /deslop over the diff before commit",
   "Opening a PR: run /no-comments before review",
   "Opening a PR: run /technical-writing, then /unslop, on commit bodies and the PR title and body",
-  "Opening a PR: write the PR title to .audit/pr-title.txt and the body to .audit/pr-body.md",
+  `Opening a PR: write the PR title to ${PR_TITLE} and the body to ${PR_BODY}`,
 ];
 
 export function seedTodo(playbook, steps) {
