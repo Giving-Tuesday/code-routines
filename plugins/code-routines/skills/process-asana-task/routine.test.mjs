@@ -9,8 +9,9 @@ import { findPrTemplate, missingTemplateHeadings, repoSlug } from "./lib/github.
 import { preToolDecision, stopDecision, stopHook } from "./lib/hooks.mjs";
 import { ciState, failedMergeChecks, reviewVerdict } from "./lib/merge.mjs";
 import { playbookStepsFor, pstackPlaybooks, pstackRoot, seedTodo } from "./lib/playbooks.mjs";
-import { openPr, shrinkScreenshot, withScreenshots } from "./lib/pr.mjs";
+import { openPr } from "./lib/pr.mjs";
 import { checkoutWorkBranch, ignoreAudit } from "./lib/prepare.mjs";
+import { shrinkScreenshot, withScreenshots } from "./lib/screenshots.mjs";
 import { browserFact, buildPrompt, buildRepairPrompt, toolsFor } from "./lib/session.mjs";
 import { baseFor, parseTicket, playbookFor } from "./lib/ticket.mjs";
 import { readTranscript, summarizeDenials, transcriptPath } from "./lib/transcript.mjs";
