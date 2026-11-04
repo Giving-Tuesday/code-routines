@@ -11,7 +11,7 @@ export const NOT_DELEGATED = "code was not delegated to a pstack:poteto-agent su
 const DRIVERS = ["run", "verify"];
 const DELEGATE = "pstack:poteto-agent";
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
-const FORBIDDEN_PATH = /^(\.github\/|\.circleci\/|\.gitlab-ci)|(^|\/)\.env/;
+const FORBIDDEN_PATH = /^(\.github\/|\.circleci\/|\.gitlab-ci)|(^|\/)\.env($|\.(?!example$|sample$|template$))/;
 
 const normalize = (s) => s.replace(/[*`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 

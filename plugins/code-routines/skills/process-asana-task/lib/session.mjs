@@ -61,6 +61,7 @@ export function buildPrompt(s) {
     sentences(
       "- Never merge. The routine merges after its own checks when Mode is merge.",
       "Never target main. Never edit CI config or secrets. Never bypass git hooks.",
+      "Never rewrite pushed history: no rebase, amend or force-push of a pushed commit.",
     ),
     "- You are unattended under a full-autonomy grant. Nobody will answer a question.",
     sentences(
