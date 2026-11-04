@@ -8,10 +8,10 @@ import { auditGit, auditResult, auditTranscript, gate, prBodyFindings, prReadine
 import { findPrTemplate, missingTemplateHeadings, repoSlug } from "./lib/github.mjs";
 import { preToolDecision, stopDecision, stopHook } from "./lib/hooks.mjs";
 import { ciState, failedMergeChecks, reviewVerdict } from "./lib/merge.mjs";
-import { allowedTools, playbookStepsFor, pstackPlaybooks, pstackRoot, seedTodo, TOOLCHAINS } from "./lib/playbooks.mjs";
+import { playbookStepsFor, pstackPlaybooks, pstackRoot, seedTodo } from "./lib/playbooks.mjs";
 import { openPr, shrinkScreenshot, withScreenshots } from "./lib/pr.mjs";
 import { checkoutWorkBranch, ignoreAudit } from "./lib/prepare.mjs";
-import { browserFact, buildPrompt, buildRepairPrompt } from "./lib/session.mjs";
+import { browserFact, buildPrompt, buildRepairPrompt, toolsFor } from "./lib/session.mjs";
 import { baseFor, parseTicket, playbookFor } from "./lib/ticket.mjs";
 import { readTranscript, summarizeDenials, transcriptPath } from "./lib/transcript.mjs";
 
@@ -107,9 +107,9 @@ test("repair prompt resumes poteto-mode with the audit and forbids history rewri
 });
 
 test("a uv repo gets uv and pytest; a Node-only repo does not", () => {
-  const uv = allowedTools(TOOLCHAINS.filter((t) => t.lock === "uv.lock"));
+  const uv = toolsFor({ toolchains: ["uv.lock"] });
   assert.ok(uv.includes("Bash(uv:*)") && uv.includes("Bash(pytest:*)"));
-  assert.ok(!allowedTools(TOOLCHAINS.filter((t) => t.lock === "package-lock.json")).includes("Bash(uv:*)"));
+  assert.ok(!toolsFor({ toolchains: ["package-lock.json"] }).includes("Bash(uv:*)"));
 });
 
 test("the seeded todo.md satisfies the todolist check once ticked or skipped", () => {
@@ -452,7 +452,7 @@ test("the PR body is checked against the template, from pr-body.md before the PR
 });
 
 test("the allowlist includes jq, cp, mv, touch and TaskStop", () => {
-  const tools = allowedTools([]);
+  const tools = toolsFor({ toolchains: [] });
   for (const t of ["Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)", "TaskStop"]) assert.ok(tools.includes(t), t);
 });
 

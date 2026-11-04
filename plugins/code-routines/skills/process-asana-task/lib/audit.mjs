@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { branchPushed, findPr, missingTemplateHeadings } from "./github.mjs";
-import { PLAYBOOKS, playbookStepsFor } from "./playbooks.mjs";
+import { PLAYBOOKS, opensPr, playbookStepsFor } from "./playbooks.mjs";
 import { readIfExists, sh, trySh } from "./shell.mjs";
 import { PR_BODY, RESULT, TODO, claudeOutputs, loadState } from "./state.mjs";
 import { readTranscript, skillName, summarizeDenials, transcriptPath, usedSkill } from "./transcript.mjs";
@@ -95,7 +95,7 @@ export function auditGit(state, cwd) {
   const commits = lines(["rev-list", "--reverse", `${from}..HEAD`]);
   const violations = [];
   const findings = [];
-  if (!PLAYBOOKS[playbook].opensPr) {
+  if (!opensPr(playbook)) {
     if (commits.length) violations.push(`${playbook} must not commit, found ${commits.length} commits`);
     return { violations, findings, pr: null };
   }

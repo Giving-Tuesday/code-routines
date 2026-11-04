@@ -3,7 +3,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { findPrTemplate, repoSlug } from "./github.mjs";
-import { TOOLCHAINS, playbookStepsFor, seedTodo } from "./playbooks.mjs";
+import { playbookStepsFor, seedTodo } from "./playbooks.mjs";
+import { TOOLCHAINS } from "./session.mjs";
 import { readIfExists, sh, trySh } from "./shell.mjs";
 import { AUDIT_DIR, TODO, saveState } from "./state.mjs";
 import { parseTicket } from "./ticket.mjs";

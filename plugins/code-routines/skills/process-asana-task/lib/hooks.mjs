@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gate, noPr } from "./audit.mjs";
-import { PLAYBOOKS } from "./playbooks.mjs";
+import { opensPr } from "./playbooks.mjs";
 import { readIfExists } from "./shell.mjs";
 import { PR_BODY, PR_TITLE, STOP_COUNT, TODO, loadState } from "./state.mjs";
 
@@ -32,7 +32,7 @@ export function preToolDecision(call, playbook, base) {
     return "Never merge or push to the base branch. The routine merges this PR after its own checks pass.";
   }
   if (FORCE_PUSH.test(command)) return "Never rewrite pushed history: no force-push. Add a new commit instead.";
-  if (PLAYBOOKS[playbook].opensPr && (PR_API_WRITE.test(command) || PR_CLI_WRITE.test(command))) {
+  if (opensPr(playbook) && (PR_API_WRITE.test(command) || PR_CLI_WRITE.test(command))) {
     return `The routine opens and updates the PR. Write ${PR_TITLE} and ${PR_BODY} instead.`;
   }
   return null;

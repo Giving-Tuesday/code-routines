@@ -4,7 +4,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { prBodyFindings, prReadiness } from "./audit.mjs";
 import { branchPushed, findPr } from "./github.mjs";
-import { PLAYBOOKS } from "./playbooks.mjs";
+import { opensPr } from "./playbooks.mjs";
 import { readIfExists, trySh } from "./shell.mjs";
 import { AUDIT_DIR, PR_BODY, PR_TITLE, RESULT, SCREENSHOT_INDEX, SHRUNK_DIR, loadState } from "./state.mjs";
 import { readTranscript, transcriptPath } from "./transcript.mjs";
@@ -30,7 +30,7 @@ function prText(cwd, state) {
 
 export function openPr(cwd) {
   const state = loadState(cwd);
-  if (!PLAYBOOKS[state.playbook].opensPr) return { ok: true, skipped: `${state.playbook} opens no PR` };
+  if (!opensPr(state.playbook)) return { ok: true, skipped: `${state.playbook} opens no PR` };
   const path = transcriptPath(state.sessionId);
   const { title, body, findings: defaults } = prText(cwd, state);
   const findings = [

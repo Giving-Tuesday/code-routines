@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { configDir } from "./playbooks.mjs";
+import { configDir } from "./shell.mjs";
 
 export const skillName = (call) => String(call.input.skill).replace(/^\//, "");
 

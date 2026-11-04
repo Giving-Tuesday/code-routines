@@ -4,11 +4,33 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { PLAYBOOKS, pstackRoot, toolsFor } from "./playbooks.mjs";
+import { opensPr, pstackRoot } from "./playbooks.mjs";
 import { AUDIT_DIR, PR_BODY, PR_TITLE, RESULT, SETTINGS, STOP_COUNT, TODO, claudeOutput, claudeOutputs, loadState, saveState } from "./state.mjs";
 import { transcriptPath } from "./transcript.mjs";
 
 const ROUTINE = fileURLToPath(new URL("../routine.mjs", import.meta.url));
+
+const BASE_TOOLS = [
+  "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch",
+  "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop",
+  "Bash(git:*)", "Bash(node:*)", "Bash(gh api:*)",
+  "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)",
+  "Bash(find:*)", "Bash(sed:*)", "Bash(mkdir:*)", "Bash(echo:*)", "Bash(printf:*)", "Bash(cd:*)",
+  "Bash(pwd)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(diff:*)", "Bash(test:*)",
+  "Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)",
+];
+
+export const TOOLCHAINS = [
+  { lock: "uv.lock", install: ["uv", ["sync", "--frozen"]], tools: ["uv", "uvx", "python", "python3", "pytest"] },
+  { lock: "pnpm-lock.yaml", install: ["pnpm", ["install", "--frozen-lockfile"]], tools: ["pnpm", "npx"] },
+  { lock: "yarn.lock", install: ["yarn", ["install", "--frozen-lockfile"]], tools: ["yarn", "npx"] },
+  { lock: "package-lock.json", install: ["npm", ["ci"]], tools: ["npm", "npx"] },
+];
+
+export function toolsFor({ toolchains }) {
+  const shellTools = TOOLCHAINS.filter((t) => toolchains.includes(t.lock)).flatMap((t) => t.tools);
+  return [...new Set([...BASE_TOOLS, ...shellTools.map((tool) => `Bash(${tool}:*)`)])];
+}
 
 const sentences = (...parts) => parts.join(" ");
 
@@ -25,7 +47,7 @@ export function browserFact(env) {
 }
 
 function prRule(s) {
-  if (!PLAYBOOKS[s.playbook].opensPr) return "This is read-only. Make no edits, no commits and no PR.";
+  if (!opensPr(s.playbook)) return "This is read-only. Make no edits, no commits and no PR.";
   return sentences(
     `Do not open the PR yourself. Push ${s.branch}, write the PR title to ${PR_TITLE} and its body to ${PR_BODY},`,
     `and the routine opens the PR against ${s.base}.`,
