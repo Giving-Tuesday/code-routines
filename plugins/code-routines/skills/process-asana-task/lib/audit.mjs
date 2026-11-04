@@ -145,5 +145,13 @@ export function gate(cwd) {
     ...git.findings,
   ];
   const { violations, pr } = git;
-  return { ok: violations.length === 0, pr, transcript: transcriptPath(state.sessionId), result: resultPath, violations, findings, refusals };
+  return {
+    ok: violations.length === 0,
+    pr,
+    transcript: transcriptPath(state.sessionId),
+    result: resultPath,
+    violations,
+    findings,
+    refusals,
+  };
 }

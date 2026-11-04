@@ -26,7 +26,7 @@ export function ciState(runs) {
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-function pollCi(cwd, slug, head, { timeoutMs, noneAfterMs, pollMs }) {
+function pollCi(cwd, slug, head, { timeoutMs = 30 * 60_000, noneAfterMs = 5 * 60_000, pollMs = 30_000 }) {
   const start = Date.now();
   for (;;) {
     const result = ciState(ghGet(cwd, `repos/${slug}/commits/${head}/check-runs?per_page=100`)?.check_runs ?? []);
@@ -38,10 +38,10 @@ function pollCi(cwd, slug, head, { timeoutMs, noneAfterMs, pollMs }) {
   }
 }
 
-export function awaitCi(cwd, { timeoutMs = 30 * 60_000, noneAfterMs = 5 * 60_000, pollMs = 30_000 } = {}) {
+export function awaitCi(cwd, timing = {}) {
   const { slug } = loadState(cwd);
   const head = headSha(cwd);
-  const result = pollCi(cwd, slug, head, { timeoutMs, noneAfterMs, pollMs });
+  const result = pollCi(cwd, slug, head, timing);
   writeFileSync(join(cwd, CI_RESULT), JSON.stringify({ head, ...result }, null, 2));
   return { ok: result.state === "green" || result.state === "none", head, ...result };
 }
