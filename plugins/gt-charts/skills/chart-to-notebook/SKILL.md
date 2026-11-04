@@ -29,7 +29,7 @@ When the embed has no series type for the chart, combine series that each draw p
 - The embed prints a value label inside every stacked bar. Set `"label": {"show": False}` on a helper bar, such as a transparent offset bar.
 - A `custom` series draws only the shape its `renderItem` names, `"errorBar"` or `"barRange"`.
 
-`notebooks/dumbbell.py` uses the first three. It also sets many style keys, so copy only its series.
+`notebooks/dumbbell.py` uses all of these except the `custom` series.
 
 ## Steps
 
