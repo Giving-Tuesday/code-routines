@@ -15,8 +15,8 @@ const [command, arg] = process.argv.slice(2);
 const cwd = process.cwd();
 
 const hooks = {
-  "pre-tool-hook": () => preToolHook(cwd),
-  "stop-hook": () => stopHook(cwd),
+  "pre-tool-hook": () => preToolHook(arg ?? cwd),
+  "stop-hook": () => stopHook(arg ?? cwd),
 };
 
 const commands = {
@@ -41,6 +41,14 @@ if (!commands[command]) {
   process.exit(2);
 }
 
-const out = commands[command]();
+function runCommand() {
+  try {
+    return commands[command]();
+  } catch (error) {
+    return { ok: false, problems: [error.message] };
+  }
+}
+
+const out = runCommand();
 console.log(JSON.stringify(out, null, 2));
 process.exit(out.ok ? 0 : 1);

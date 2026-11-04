@@ -8,6 +8,8 @@ import { NO_TRANSCRIPT, loadTranscript, skillName, summarizeDenials, transcriptP
 
 export const NO_DRIVER = "no driver skill (run or verify) ran on the real surface";
 export const NOT_DELEGATED = "code was not delegated to a pstack:poteto-agent subagent";
+export const NO_REPRO_FIRST = "first commit is not a test-only repro commit";
+export const NO_FIX_AFTER_REPRO = "no fix commit after the repro commit";
 export const noPr = (branch) => `no PR for ${branch}`;
 const DRIVERS = ["run", "verify"];
 const DELEGATE = "pstack:poteto-agent";
@@ -109,8 +111,8 @@ export function auditGit(state, cwd) {
   if (playbook === "bug-fix") {
     const isTest = (f) => TEST_PATH.test(f);
     const first = files(commits[0]);
-    if (!first.length || !first.every(isTest)) findings.push("first commit is not a test-only repro commit");
-    if (commits.slice(1).every((c) => files(c).every(isTest))) findings.push("no fix commit after the repro commit");
+    if (!first.length || !first.every(isTest)) findings.push(NO_REPRO_FIRST);
+    if (commits.slice(1).every((c) => files(c).every(isTest))) findings.push(NO_FIX_AFTER_REPRO);
   }
   findings.push(...changelogFindings(cwd, from));
   if (!branchPushed(cwd, branch)) findings.push(`origin/${branch} does not match HEAD`);
