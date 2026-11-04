@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allowedTools, auditResult, browserFact, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
+import { allowedTools, auditResult, browserFact, pstackRoot, preToolDecision, NO_DRIVER, NOT_DELEGATED, ciState, failedMergeChecks, reviewVerdict, buildRepairPrompt, seedTodo, stopDecision, summarizeDenials, TOOLCHAINS, pstackPlaybooks, auditTranscript, baseFor, parseTicket, playbookFor, playbookSteps, readTranscript, repoSlug, unreleasedSection } from "./routine.mjs";
 
 const steps = playbookSteps(readFileSync(join(pstackPlaybooks(), "bug-fix.md"), "utf8"));
 
@@ -182,4 +182,8 @@ test("the PreToolUse hook enforces delegation and skill order", () => {
 test("the prompt names the Playwright browser only where one is installed", () => {
   assert.equal(browserFact({}), "");
   assert.match(browserFact({ PLAYWRIGHT_BROWSERS_PATH: "/opt/pw-browsers" }), /require\("playwright"\).*\/opt\/pw-browsers.*google-chrome is not installed/s);
+});
+
+test("the pstack root handed to --add-dir holds the poteto-mode playbooks", () => {
+  assert.ok(existsSync(join(pstackRoot(), "skills/poteto-mode/playbooks/bug-fix.md")));
 });
