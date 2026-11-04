@@ -3,17 +3,18 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const FIELDS = ["Repo", "Type", "Mode", "Fix target", "Release version"];
-const DRIVER = /(^|:)(run|verify)$/;
+const DRIVERS = ["run", "verify"];
 const BASE_TOOLS = [
-  "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+  "Read", "Edit", "Write", "Glob", "Grep", "Skill", "Agent", "ToolSearch", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop",
   "Bash(git:*)", "Bash(node:*)", "Bash(gh api:*)",
   "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(mkdir:*)",
   "Bash(echo:*)", "Bash(printf:*)", "Bash(cd:*)", "Bash(pwd)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(diff:*)", "Bash(test:*)",
+  "Bash(jq:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)",
 ];
 const STOP_HOOK_LIMIT = 3;
 export const NO_DRIVER = "no driver skill (run or verify) ran on the real surface";
@@ -36,7 +37,7 @@ export const PLAYBOOKS = {
 };
 
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
-const FORBIDDEN_PATH = /^(\.github\/|\.circleci\/|\.gitlab-ci|\.env)/;
+const FORBIDDEN_PATH = /^(\.github\/|\.circleci\/|\.gitlab-ci)|(^|\/)\.env/;
 
 const normalize = (s) => s.replace(/[*`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 const sh = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -72,6 +73,8 @@ export function playbookSteps(markdown) {
   });
 }
 
+const skillName = (call) => String(call.input.skill).replace(/^\//, "");
+
 export function readTranscript(jsonl) {
   const calls = [];
   const results = new Map();
@@ -103,7 +106,7 @@ export function readTranscript(jsonl) {
   return {
     prompt,
     tasks: [...tasks.values()],
-    skills: calls.filter((c) => c.name === "Skill").map((c) => String(c.input.skill).replace(/^\//, "")),
+    skills: calls.filter((c) => c.name === "Skill").map(skillName),
     agents: calls.filter((c) => c.name === "Agent").map((c) => c.input.subagent_type ?? ""),
     bash: calls.filter((c) => c.name === "Bash").map((c) => String(c.input.command)),
     calls,
@@ -112,7 +115,7 @@ export function readTranscript(jsonl) {
 
 const usedSkill = (skills, name) => skills.some((s) => s === name || s.endsWith(`:${name}`));
 
-export function auditTranscript(transcript, playbook, steps, todo = "") {
+export function auditTranscript(transcript, playbook, steps, todo = "", { projectPlaybooks = false } = {}) {
   const rules = PLAYBOOKS[playbook];
   const problems = [];
   const skipped = (word) => [...transcript.tasks.map((t) => t.text), ...todo.split("\n")].some((t) => /skip:/i.test(t) && t.toLowerCase().includes(word));
@@ -132,18 +135,18 @@ export function auditTranscript(transcript, playbook, steps, todo = "") {
   for (const skill of rules.skippable) {
     if (!usedSkill(transcript.skills, skill) && !skipped(skill)) problems.push(`skill ${skill} neither ran nor has a skip: reason in the todolist`);
   }
-  if (rules.driver && !transcript.skills.some((s) => DRIVER.test(s))) problems.push(NO_DRIVER);
+  if (rules.driver && !DRIVERS.some((s) => usedSkill(transcript.skills, s))) problems.push(NO_DRIVER);
   if (rules.delegate && !transcript.agents.includes("pstack:poteto-agent") && !usedSkill(transcript.skills, "arena")) {
     problems.push(NOT_DELEGATED);
   }
-  if (!transcript.bash.some((c) => c.includes("check-playbooks.mjs"))) problems.push("check-playbooks.mjs never ran");
+  if (projectPlaybooks && !transcript.bash.some((c) => c.includes("check-playbooks.mjs"))) problems.push("check-playbooks.mjs never ran");
   return problems;
 }
 
 export function auditResult(markdown, steps) {
   if (!/playbook compliance/i.test(markdown)) return ["result has no Playbook compliance table"];
   return steps
-    .filter((s) => !new RegExp(`^\\|\\s*${s.n}\\s*\\|.*(done|skip:)`, "im").test(markdown))
+    .filter((s) => !new RegExp(`^\\|\\s*${s.n}\\s*\\|[^|]*\\|\\s*(done|skip:)`, "im").test(markdown))
     .map((s) => `compliance table has no done or skip: row for step ${s.n}`);
 }
 
@@ -151,7 +154,15 @@ export function unreleasedSection(changelog) {
   return changelog.match(/^## \[Unreleased\][^\n]*\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m)?.[1] ?? "";
 }
 
-function auditGit(state, cwd) {
+const readIfExists = (path) => (existsSync(path) ? readFileSync(path, "utf8") : null);
+
+export function prBodyFindings(cwd, state, body) {
+  if (!state.prTemplate || body === null) return [];
+  const missing = missingTemplateHeadings(readFileSync(join(cwd, state.prTemplate), "utf8"), body);
+  return missing.length ? [`PR body lacks the template headings: ${missing.join(", ")}`] : [];
+}
+
+export function auditGit(state, cwd) {
   const from = state.baseSha ?? `origin/${state.base}`;
   const { base, branch, playbook } = state;
   const rules = PLAYBOOKS[playbook];
@@ -186,9 +197,8 @@ function auditGit(state, cwd) {
   else {
     if (pr.base.ref !== base) violations.push(`PR base is ${pr.base.ref}, expected ${base}`);
     if (pr.merged_at) violations.push("the work session merged the PR; only the routine merges");
-    const missing = state.prTemplate ? missingTemplateHeadings(readFileSync(join(cwd, state.prTemplate), "utf8"), pr.body) : [];
-    if (missing.length) findings.push(`PR body lacks the template headings: ${missing.join(", ")}`);
   }
+  findings.push(...prBodyFindings(cwd, state, pr ? pr.body ?? "" : readIfExists(join(cwd, ".audit/pr-body.md"))));
   return { violations, findings, pr: pr ? { url: pr.html_url, number: pr.number, base: pr.base.ref, head: pr.head.sha, state: pr.state } : null };
 }
 
@@ -231,7 +241,10 @@ function openPr(cwd) {
   const title = existsSync(join(cwd, ".audit/pr-title.txt")) ? readFileSync(join(cwd, ".audit/pr-title.txt"), "utf8").trim() : "";
   const body = existsSync(join(cwd, ".audit/pr-body.md")) ? readFileSync(join(cwd, ".audit/pr-body.md"), "utf8") : "";
   const pushed = trySh("git", ["ls-remote", "origin", `refs/heads/${state.branch}`], cwd)?.split("\t")[0] === sh("git", ["rev-parse", "HEAD"], cwd);
-  const findings = path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"];
+  const findings = [
+    ...(path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"]),
+    ...prBodyFindings(cwd, state, body),
+  ];
   const problems = [
     ...(title ? [] : ["no .audit/pr-title.txt"]),
     ...(body.trim() ? [] : ["no .audit/pr-body.md"]),
@@ -262,9 +275,11 @@ export function repoSlug(remoteUrl) {
   return remoteUrl.replace(/\.git$/, "").split(/[/:]/).slice(-2).join("/");
 }
 
+export const configDir = () => process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+
 export function pstackPlaybooks() {
   if (process.env.PSTACK_POTETO_DIR) return join(process.env.PSTACK_POTETO_DIR, "playbooks");
-  const root = join(homedir(), ".claude/plugins/cache");
+  const root = join(configDir(), "plugins/cache");
   const found = readdirSync(root, { recursive: true })
     .filter((p) => String(p).endsWith("skills/poteto-mode/playbooks/bug-fix.md"))
     .map((p) => join(root, String(p), ".."))
@@ -297,6 +312,13 @@ export function checkoutWorkBranch(cwd, branch, base) {
   return [];
 }
 
+export function ignoreAudit(cwd) {
+  const exclude = resolve(cwd, sh("git", ["rev-parse", "--git-path", "info/exclude"], cwd));
+  if ((readIfExists(exclude) ?? "").includes(".audit/")) return;
+  mkdirSync(dirname(exclude), { recursive: true });
+  appendFileSync(exclude, "\n.audit/\n");
+}
+
 function prepare(ticketPath, cwd) {
   const ticket = JSON.parse(readFileSync(ticketPath, "utf8"));
   const parsed = parseTicket(ticket);
@@ -308,8 +330,7 @@ function prepare(ticketPath, cwd) {
   const checkout = checkoutWorkBranch(cwd, branch, parsed.base);
   if (checkout.length) return { ok: false, problems: checkout };
   mkdirSync(join(cwd, ".audit"), { recursive: true });
-  const exclude = join(cwd, ".git/info/exclude");
-  if (!readFileSync(exclude, "utf8").includes(".audit/")) appendFileSync(exclude, "\n.audit/\n");
+  ignoreAudit(cwd);
   const toolchains = TOOLCHAINS.filter((t) => existsSync(join(cwd, t.lock)));
   for (const { install } of toolchains) {
     if (spawnSync(install[0], install[1], { cwd, stdio: "inherit" }).status !== 0) return { ok: false, problems: [`${install.flat().join(" ")} failed`] };
@@ -399,8 +420,8 @@ function repair(auditPath, cwd) {
   return claude(cwd, state, "repair", ["--resume", state.sessionId], buildRepairPrompt(state, readFileSync(auditPath, "utf8")));
 }
 
-function transcriptPath(sessionId) {
-  const root = join(homedir(), ".claude/projects");
+export function transcriptPath(sessionId) {
+  const root = join(configDir(), "projects");
   const hit = readdirSync(root).map((d) => join(root, d, `${sessionId}.jsonl`)).find(existsSync);
   return hit ?? null;
 }
@@ -413,7 +434,7 @@ export function summarizeDenials(outputs) {
     let denials = [];
     try { denials = JSON.parse(out).permission_denials ?? []; } catch {}
     for (const d of denials) {
-      const what = d.tool_input?.command ?? d.tool_name;
+      const what = d.tool_input?.command ?? d.tool_name ?? "an unnamed tool call";
       counts.set(what, (counts.get(what) ?? 0) + 1);
     }
   }
@@ -433,7 +454,7 @@ const DELEGATE = "pstack:poteto-agent";
 
 export function prReadiness(transcript) {
   const lastDelegate = transcript.calls.findLastIndex((c) => c.name === "Agent" && c.input.subagent_type === DELEGATE);
-  const ranAfter = (skill) => transcript.calls.some((c, i) => i > lastDelegate && c.name === "Skill" && new RegExp(`(^|:)${skill}$`).test(String(c.input.skill).replace(/^\//, "")));
+  const ranAfter = (skill) => transcript.calls.some((c, i) => i > lastDelegate && c.name === "Skill" && usedSkill([skillName(c)], skill));
   return [
     ...["deslop", "no-comments"].filter((s) => !ranAfter(s)).map((s) => `${s} has not run after the last delegate's work`),
     ...["technical-writing", "unslop"].filter((s) => !usedSkill(transcript.skills, s)).map((s) => `${s} has not run`),
@@ -526,7 +547,7 @@ function gate(cwd) {
   const outputs = claudeOutputs(cwd).map((f) => readFileSync(f, "utf8"));
   const findings = [
     ...summarizeDenials(outputs),
-    ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo) : ["no transcript for the work session"]),
+    ...(path ? auditTranscript(readTranscript(readFileSync(path, "utf8")), state.playbook, steps, todo, { projectPlaybooks: existsSync(join(cwd, ".agents/playbooks")) }) : ["no transcript for the work session"]),
     ...(existsSync(resultPath) ? auditResult(readFileSync(resultPath, "utf8"), steps) : ["no .audit/result.md"]),
     ...git.findings,
   ];
