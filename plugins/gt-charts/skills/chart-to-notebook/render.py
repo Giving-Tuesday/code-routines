@@ -51,11 +51,57 @@ def serve_npm_bundle() -> str:
     return f"http://127.0.0.1:{server.server_port}"
 
 
-def capture_documents(notebook: Path) -> list[str]:
-    docs = []
-    gt.Chart.show = lambda chart: docs.append(build_notebook_document(chart))
+STYLE_KEYS = frozenset(
+    {
+        "axisLine",
+        "axisTick",
+        "backgroundColor",
+        "barCategoryGap",
+        "barGap",
+        "barMaxWidth",
+        "barWidth",
+        "borderColor",
+        "borderRadius",
+        "borderWidth",
+        "color",
+        "fontFamily",
+        "fontSize",
+        "fontStyle",
+        "fontWeight",
+        "grid",
+        "itemStyle",
+        "lineHeight",
+        "lineStyle",
+        "opacity",
+        "padding",
+        "rich",
+        "splitArea",
+        "splitLine",
+        "symbol",
+        "symbolSize",
+        "textStyle",
+    }
+)
+
+
+def style_paths(node, path=""):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            here = f"{path}.{key}" if path else key
+            if key in STYLE_KEYS:
+                yield here
+            else:
+                yield from style_paths(value, here)
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            yield from style_paths(item, f"{path}[{i}]")
+
+
+def capture_charts(notebook: Path) -> list[gt.Chart]:
+    charts = []
+    gt.Chart.show = lambda chart: charts.append(chart)
     exec(compile(notebook.read_text(), str(notebook), "exec"), {"__name__": "__main__"})
-    return docs
+    return charts
 
 
 async def screenshot(docs, out_dir: Path, stem: str, chromium: str | None) -> list[str]:
@@ -96,10 +142,15 @@ def main():
 
     if args.local_bundle:
         os.environ["GT_CHARTS_BUNDLE_URL"] = serve_npm_bundle()
-    docs = capture_documents(args.notebook)
-    if not docs:
+    charts = capture_charts(args.notebook)
+    if not charts:
         sys.exit("the notebook shows no chart; end each chart with .show()")
+    for n, chart in enumerate(charts, 1):
+        styles = [*style_paths(chart.option), *(["theme"] if chart.theme else [])]
+        if styles:
+            print(f"chart {n} sets style: {', '.join(styles)}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    docs = [build_notebook_document(chart) for chart in charts]
     problems = asyncio.run(
         screenshot(docs, args.out_dir, args.notebook.stem, args.chromium)
     )
