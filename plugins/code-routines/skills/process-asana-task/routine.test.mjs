@@ -37,7 +37,6 @@ const compliant = [
   ...call("Bash", { command: "node /x/scripts/check-playbooks.mjs" }),
 ].join("\n");
 
-const withPlaybooks = { projectPlaybooks: true };
 const observedFailure = [prompt, ...call("Skill", { skill: "pstack:poteto-mode" }), ...call("Bash", { command: "npm test" })].join("\n");
 
 test("bug-fix playbook has numbered steps to audit", () => {
@@ -45,11 +44,11 @@ test("bug-fix playbook has numbered steps to audit", () => {
 });
 
 test("compliant transcript passes", () => {
-  assert.deepEqual(auditTranscript(readTranscript(compliant), "bug-fix", steps), []);
+  assert.deepEqual(auditTranscript(readTranscript(compliant), { playbook: "bug-fix", steps }), []);
 });
 
 test("observed failure is blocked on every skipped step", () => {
-  const problems = auditTranscript(readTranscript(observedFailure), "bug-fix", steps, "", withPlaybooks);
+  const problems = auditTranscript(readTranscript(observedFailure), { playbook: "bug-fix", steps, projectPlaybooks: true });
   for (const want of ["todolist lacks bug-fix step 1", "deslop has not run", "no-comments has not run", "technical-writing has not run", "skill how never ran", "no driver skill", "not delegated", "check-playbooks.mjs never ran", "skill why neither ran"]) {
     assert.ok(problems.some((p) => p.includes(want)), `missing: ${want}\n${problems.join("\n")}`);
   }
@@ -57,19 +56,19 @@ test("observed failure is blocked on every skipped step", () => {
 
 test("a todolist skip: reason excuses a skippable skill only", () => {
   const withSkip = compliant.replace(/"skill":"why"/, '"skill":"nope"') + "\n" + call("TaskCreate", { subject: "why: skip: new code, no regression history" }, "Task #99 created").join("\n");
-  assert.deepEqual(auditTranscript(readTranscript(withSkip), "bug-fix", steps), []);
+  assert.deepEqual(auditTranscript(readTranscript(withSkip), { playbook: "bug-fix", steps }), []);
   const noDeslop = compliant.replace(/"skill":"deslop"/, '"skill":"nope"') + "\n" + call("TaskCreate", { subject: "deslop skip: small" }, "Task #98 created").join("\n");
-  assert.deepEqual(auditTranscript(readTranscript(noDeslop), "bug-fix", steps), ["deslop has not run after the last delegate's work"]);
+  assert.deepEqual(auditTranscript(readTranscript(noDeslop), { playbook: "bug-fix", steps }), ["deslop has not run after the last delegate's work"]);
 });
 
 test("an incomplete step fails", () => {
   const pending = compliant.replace(/"taskId":"2","status":"completed"/, '"taskId":"2","status":"in_progress"');
-  assert.deepEqual(auditTranscript(readTranscript(pending), "bug-fix", steps), ["todolist step 2 is in_progress, not completed"]);
+  assert.deepEqual(auditTranscript(readTranscript(pending), { playbook: "bug-fix", steps }), ["todolist step 2 is in_progress, not completed"]);
 });
 
 test("subagent tool calls do not count for the lead", () => {
   const sidechain = compliant.replaceAll('"isSidechain":false', '"isSidechain":true');
-  assert.ok(auditTranscript(readTranscript(sidechain), "bug-fix", steps).length > 5);
+  assert.ok(auditTranscript(readTranscript(sidechain), { playbook: "bug-fix", steps }).length > 5);
 });
 
 test("compliance table needs a row per step", () => {
@@ -81,7 +80,8 @@ test("compliance table needs a row per step", () => {
 
 test("ticket fields map to playbook and BASE", () => {
   const fields = { Repo: "embed-app", Type: "Bug", Mode: "pr", "Fix target": "release", "Release version": "v2.4.1" };
-  assert.deepEqual(parseTicket({ fields }), { playbook: "bug-fix", base: "release-2.x" });
+  const ticket = { gid: "1", url: "https://app.asana.com/0/0/1", name: "n", text: "t", fields };
+  assert.deepEqual(parseTicket(ticket), { gid: "1", url: ticket.url, name: "n", text: "t", mode: "pr", repo: "embed-app", fixTarget: "release", playbook: "bug-fix", base: "release-2.x" });
   assert.equal(playbookFor({ Type: "Feature", Mode: "review only" }), "investigation");
   assert.equal(playbookFor({ Type: "Explore", Mode: "pr" }), "investigation");
   assert.equal(baseFor("3.0.0"), "release-3.x");
@@ -118,9 +118,9 @@ test("the seeded todo.md satisfies the todolist check once ticked or skipped", (
   assert.match(todo, /Opening a PR: write the PR title to \.audit\/pr-title\.txt and the body to \.audit\/pr-body\.md/);
   assert.doesNotMatch(todo, /read the PR back/);
   const noTasks = readTranscript([prompt, ...call("Skill", { skill: "how" })].join("\n"));
-  assert.ok(auditTranscript(noTasks, "bug-fix", steps, todo).some((p) => p.includes("step 1")));
+  assert.ok(auditTranscript(noTasks, { playbook: "bug-fix", steps, todo }).some((p) => p.includes("step 1")));
   const ticked = todo.replace(/- \[ \] 1\./, "- [x] 1.").replace(/(- \[ \] 2\..*)/, "$1 skip: one file");
-  const problems = auditTranscript(noTasks, "bug-fix", steps, ticked);
+  const problems = auditTranscript(noTasks, { playbook: "bug-fix", steps, todo: ticked });
   assert.ok(!problems.some((p) => /step (1|2)\b/.test(p)), problems.join("\n"));
 });
 
@@ -370,8 +370,8 @@ const withEnv = (vars, fn) => {
 
 test("check-playbooks.mjs is required only when the repo has project playbooks", () => {
   const transcript = readTranscript(observedFailure);
-  assert.ok(!auditTranscript(transcript, "bug-fix", steps).some((p) => p.includes("check-playbooks.mjs")));
-  assert.ok(auditTranscript(transcript, "bug-fix", steps, "", withPlaybooks).some((p) => p.includes("check-playbooks.mjs never ran")));
+  assert.ok(!auditTranscript(transcript, { playbook: "bug-fix", steps }).some((p) => p.includes("check-playbooks.mjs")));
+  assert.ok(auditTranscript(transcript, { playbook: "bug-fix", steps, projectPlaybooks: true }).some((p) => p.includes("check-playbooks.mjs never ran")));
 });
 
 test("a worktree, or a checkout with no info/exclude, still gets .audit/ ignored", () => {
@@ -390,7 +390,7 @@ test("a worktree, or a checkout with no info/exclude, still gets .audit/ ignored
 test("a slash or plugin prefix on a skill name counts for every skill check", () => {
   const seq = (...names) => readTranscript([prompt, ...call("Agent", { subagent_type: "pstack:poteto-agent", prompt: "fix" }), ...names.flatMap((skill) => call("Skill", { skill }))].join("\n"));
   assert.deepEqual(prReadiness(seq("/deslop", "pstack:no-comments", "/pstack:technical-writing", "unslop")), []);
-  const problems = auditTranscript(seq("/how", "/pstack:verify", "/pstack:deslop", "/why", "/tdd", "/no-comments", "/technical-writing", "/unslop"), "bug-fix", steps);
+  const problems = auditTranscript(seq("/how", "/pstack:verify", "/pstack:deslop", "/why", "/tdd", "/no-comments", "/technical-writing", "/unslop"), { playbook: "bug-fix", steps });
   assert.ok(!problems.some((p) => /never ran|has not run|no driver|neither ran/.test(p)), problems.join("\n"));
 });
 

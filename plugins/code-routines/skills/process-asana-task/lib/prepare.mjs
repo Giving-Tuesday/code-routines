@@ -30,16 +30,15 @@ export function ignoreAudit(cwd) {
   appendFileSync(exclude, `\n${AUDIT_DIR}/\n`);
 }
 
-function workBranch(cwd, ticket) {
+function workBranch(cwd, gid) {
   const current = sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-  return process.env.ROUTINE_BRANCH || (current.startsWith("claude/") ? current : `claude/asana-${ticket.gid}`);
+  return process.env.ROUTINE_BRANCH || (current.startsWith("claude/") ? current : `claude/asana-${gid}`);
 }
 
 export function prepare(ticketPath, cwd) {
-  const ticket = JSON.parse(readFileSync(ticketPath, "utf8"));
-  const parsed = parseTicket(ticket);
+  const parsed = parseTicket(JSON.parse(readFileSync(ticketPath, "utf8")));
   if (parsed.error) return { ok: false, problems: [parsed.error] };
-  const branch = workBranch(cwd, ticket);
+  const branch = workBranch(cwd, parsed.gid);
   sh("git", ["fetch", "origin", "--tags"], cwd);
   if (!trySh("git", ["rev-parse", "--verify", `origin/${parsed.base}`], cwd)) {
     return { ok: false, problems: [`${parsed.base} is not on origin`] };
@@ -59,13 +58,6 @@ export function prepare(ticketPath, cwd) {
     ...parsed,
     branch,
     toolchains: toolchains.map((t) => t.lock),
-    gid: ticket.gid,
-    url: ticket.url,
-    name: ticket.name,
-    text: ticket.text,
-    mode: ticket.fields.Mode,
-    repo: ticket.fields.Repo,
-    fixTarget: ticket.fields["Fix target"],
     slug: repoSlug(sh("git", ["remote", "get-url", "origin"], cwd)),
     baseSha: sh("git", ["rev-parse", `origin/${parsed.base}`], cwd),
     prTemplate: findPrTemplate(cwd),

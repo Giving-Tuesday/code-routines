@@ -29,7 +29,7 @@ function todolistGaps(transcript, playbook, steps, todo) {
   return problems;
 }
 
-export function auditTranscript(transcript, playbook, steps, todo = "", { projectPlaybooks = false } = {}) {
+export function auditTranscript(transcript, { playbook, steps, todo = "", projectPlaybooks = false }) {
   const rules = PLAYBOOKS[playbook];
   const ran = (skill) => usedSkill(transcript.skills, skill);
   const skipped = (word) =>
@@ -87,6 +87,9 @@ function changelogFindings(cwd, from) {
   return added.length ? [] : ["CHANGELOG.md [Unreleased] has no new bullet"];
 }
 
+const prSummary = (pr) =>
+  pr ? { url: pr.html_url, number: pr.number, base: pr.base.ref, head: pr.head.sha, state: pr.state } : null;
+
 export function auditGit(state, cwd) {
   const from = state.baseSha ?? `origin/${state.base}`;
   const { base, branch, playbook } = state;
@@ -118,12 +121,7 @@ export function auditGit(state, cwd) {
     if (pr.merged_at) violations.push("the work session merged the PR; only the routine merges");
   }
   findings.push(...prBodyFindings(cwd, state, pr ? pr.body ?? "" : readIfExists(join(cwd, PR_BODY))));
-  if (!pr) return { violations, findings, pr: null };
-  return {
-    violations,
-    findings,
-    pr: { url: pr.html_url, number: pr.number, base: pr.base.ref, head: pr.head.sha, state: pr.state },
-  };
+  return { violations, findings, pr: prSummary(pr) };
 }
 
 export function gate(cwd) {
@@ -132,12 +130,17 @@ export function gate(cwd) {
   const resultPath = join(cwd, RESULT);
   const resultMd = readIfExists(resultPath);
   const git = auditGit(state, cwd);
-  const todo = readIfExists(join(cwd, TODO)) ?? "";
-  const audit = { projectPlaybooks: existsSync(join(cwd, ".agents/playbooks")) };
   const refusals = summarizeDenials(claudeOutputs(cwd).map((f) => readFileSync(f, "utf8")));
   const transcript = loadTranscript(state);
   const findings = [
-    ...(transcript ? auditTranscript(transcript, state.playbook, steps, todo, audit) : [NO_TRANSCRIPT]),
+    ...(transcript
+      ? auditTranscript(transcript, {
+          playbook: state.playbook,
+          steps,
+          todo: readIfExists(join(cwd, TODO)) ?? "",
+          projectPlaybooks: existsSync(join(cwd, ".agents/playbooks")),
+        })
+      : [NO_TRANSCRIPT]),
     ...(resultMd === null ? [`no ${RESULT}`] : auditResult(resultMd, steps)),
     ...git.findings,
   ];
