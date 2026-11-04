@@ -152,18 +152,19 @@ export function unreleasedSection(changelog) {
 }
 
 function auditGit(state, cwd) {
+  const from = state.baseSha ?? `origin/${state.base}`;
   const { base, branch, playbook } = state;
   const rules = PLAYBOOKS[playbook];
   const violations = [];
   const findings = [];
-  const commits = sh("git", ["rev-list", "--reverse", `origin/${base}..HEAD`], cwd).split("\n").filter(Boolean);
+  const commits = sh("git", ["rev-list", "--reverse", `${from}..HEAD`], cwd).split("\n").filter(Boolean);
   const files = (rev) => sh("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", rev], cwd).split("\n").filter(Boolean);
   if (!rules.opensPr) {
     if (commits.length) violations.push(`${playbook} must not commit, found ${commits.length} commits`);
     return { violations, findings, pr: null };
   }
-  if (!commits.length) return { violations: [`no commits on ${branch} beyond origin/${base}`], findings, pr: null };
-  const touched = sh("git", ["diff", "--name-only", `origin/${base}...HEAD`], cwd).split("\n").filter(Boolean);
+  if (!commits.length) return { violations: [`no commits on ${branch} beyond ${from}`], findings, pr: null };
+  const touched = sh("git", ["diff", "--name-only", `${from}...HEAD`], cwd).split("\n").filter(Boolean);
   for (const f of touched.filter((f) => FORBIDDEN_PATH.test(f))) violations.push(`touches CI config or secrets: ${f}`);
   if (playbook === "bug-fix") {
     const first = files(commits[0]);
@@ -171,7 +172,7 @@ function auditGit(state, cwd) {
     if (!commits.slice(1).some((c) => files(c).some((f) => !TEST_PATH.test(f)))) findings.push("no fix commit after the repro commit");
   }
   if (existsSync(join(cwd, "CHANGELOG.md"))) {
-    const before = unreleasedSection(trySh("git", ["show", `origin/${base}:CHANGELOG.md`], cwd) ?? "");
+    const before = unreleasedSection(trySh("git", ["show", `${from}:CHANGELOG.md`], cwd) ?? "");
     const added = unreleasedSection(readFileSync(join(cwd, "CHANGELOG.md"), "utf8"))
       .split("\n").filter((l) => /^\s*[-*] /.test(l) && !before.includes(l));
     if (!added.length) findings.push("CHANGELOG.md [Unreleased] has no new bullet");
@@ -286,6 +287,7 @@ function prepare(ticketPath, cwd) {
     ...parsed, branch, toolchains: toolchains.map((t) => t.lock), gid: ticket.gid, url: ticket.url, name: ticket.name, text: ticket.text,
     mode: ticket.fields.Mode, repo: ticket.fields.Repo, fixTarget: ticket.fields["Fix target"],
     slug: repoSlug(sh("git", ["remote", "get-url", "origin"], cwd)),
+    baseSha: sh("git", ["rev-parse", `origin/${parsed.base}`], cwd),
     prTemplate: findPrTemplate(cwd),
   };
   saveState(cwd, state);
