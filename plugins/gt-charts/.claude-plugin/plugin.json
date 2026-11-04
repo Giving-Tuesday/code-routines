@@ -1,0 +1,5 @@
+{
+  "name": "gt-charts",
+  "description": "Build gt-charts example notebooks for Databricks from chart images",
+  "version": "1.0.0"
+}
