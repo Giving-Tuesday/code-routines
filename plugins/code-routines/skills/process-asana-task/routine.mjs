@@ -152,18 +152,19 @@ export function unreleasedSection(changelog) {
 }
 
 function auditGit(state, cwd) {
+  const from = state.baseSha ?? `origin/${state.base}`;
   const { base, branch, playbook } = state;
   const rules = PLAYBOOKS[playbook];
   const violations = [];
   const findings = [];
-  const commits = sh("git", ["rev-list", "--reverse", `origin/${base}..HEAD`], cwd).split("\n").filter(Boolean);
+  const commits = sh("git", ["rev-list", "--reverse", `${from}..HEAD`], cwd).split("\n").filter(Boolean);
   const files = (rev) => sh("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", rev], cwd).split("\n").filter(Boolean);
   if (!rules.opensPr) {
     if (commits.length) violations.push(`${playbook} must not commit, found ${commits.length} commits`);
     return { violations, findings, pr: null };
   }
-  if (!commits.length) return { violations: [`no commits on ${branch} beyond origin/${base}`], findings, pr: null };
-  const touched = sh("git", ["diff", "--name-only", `origin/${base}...HEAD`], cwd).split("\n").filter(Boolean);
+  if (!commits.length) return { violations: [`no commits on ${branch} beyond ${from}`], findings, pr: null };
+  const touched = sh("git", ["diff", "--name-only", `${from}...HEAD`], cwd).split("\n").filter(Boolean);
   for (const f of touched.filter((f) => FORBIDDEN_PATH.test(f))) violations.push(`touches CI config or secrets: ${f}`);
   if (playbook === "bug-fix") {
     const first = files(commits[0]);
@@ -171,7 +172,7 @@ function auditGit(state, cwd) {
     if (!commits.slice(1).some((c) => files(c).some((f) => !TEST_PATH.test(f)))) findings.push("no fix commit after the repro commit");
   }
   if (existsSync(join(cwd, "CHANGELOG.md"))) {
-    const before = unreleasedSection(trySh("git", ["show", `origin/${base}:CHANGELOG.md`], cwd) ?? "");
+    const before = unreleasedSection(trySh("git", ["show", `${from}:CHANGELOG.md`], cwd) ?? "");
     const added = unreleasedSection(readFileSync(join(cwd, "CHANGELOG.md"), "utf8"))
       .split("\n").filter((l) => /^\s*[-*] /.test(l) && !before.includes(l));
     if (!added.length) findings.push("CHANGELOG.md [Unreleased] has no new bullet");
@@ -221,6 +222,28 @@ export function uploadScreenshots(files, cwd) {
     if (trySh("git", ["push", "-q", "origin", `${commit}:refs/heads/${SCREENSHOT_BRANCH}`], cwd) !== null) return commit;
     if (attempt === 2) throw new Error(`could not push ${SCREENSHOT_BRANCH}`);
   }
+}
+
+function openPr(cwd) {
+  const state = loadState(cwd);
+  if (!PLAYBOOKS[state.playbook].opensPr) return { ok: true, skipped: `${state.playbook} opens no PR` };
+  const path = transcriptPath(state.sessionId);
+  const title = existsSync(join(cwd, ".audit/pr-title.txt")) ? readFileSync(join(cwd, ".audit/pr-title.txt"), "utf8").trim() : "";
+  const body = existsSync(join(cwd, ".audit/pr-body.md")) ? readFileSync(join(cwd, ".audit/pr-body.md"), "utf8") : "";
+  const pushed = trySh("git", ["ls-remote", "origin", `refs/heads/${state.branch}`], cwd)?.split("\t")[0] === sh("git", ["rev-parse", "HEAD"], cwd);
+  const problems = [
+    ...(path ? prReadiness(readTranscript(readFileSync(path, "utf8"))) : ["no transcript for the work session"]),
+    ...(title ? [] : ["no .audit/pr-title.txt"]),
+    ...(body.trim() ? [] : ["no .audit/pr-body.md"]),
+    ...(pushed ? [] : [`origin/${state.branch} does not match HEAD`]),
+  ];
+  if (problems.length) return { ok: false, problems };
+  const api = (args, input) => JSON.parse(execFileSync("gh", ["api", ...args, "--input", "-"], { cwd, encoding: "utf8", input: JSON.stringify(input) }));
+  const open = JSON.parse(trySh("gh", ["api", `repos/${state.slug}/pulls?state=open&head=${state.slug.split("/")[0]}:${state.branch}`], cwd) ?? "[]")[0];
+  const pr = open
+    ? api(["-X", "PATCH", `repos/${state.slug}/pulls/${open.number}`], { title, body })
+    : api(["-X", "POST", `repos/${state.slug}/pulls`], { title, body, head: state.branch, base: state.base, draft: false });
+  return { ok: true, pr: pr.html_url };
 }
 
 function attachScreenshots(cwd) {
@@ -286,6 +309,7 @@ function prepare(ticketPath, cwd) {
     ...parsed, branch, toolchains: toolchains.map((t) => t.lock), gid: ticket.gid, url: ticket.url, name: ticket.name, text: ticket.text,
     mode: ticket.fields.Mode, repo: ticket.fields.Repo, fixTarget: ticket.fields["Fix target"],
     slug: repoSlug(sh("git", ["remote", "get-url", "origin"], cwd)),
+    baseSha: sh("git", ["rev-parse", `origin/${parsed.base}`], cwd),
     prTemplate: findPrTemplate(cwd),
   };
   saveState(cwd, state);
@@ -310,7 +334,7 @@ export const missingTemplateHeadings = (template, body) => templateHeadings(temp
 
 export function buildPrompt(s) {
   const pr = PLAYBOOKS[s.playbook].opensPr
-    ? `Open the PR against ${s.base}, not as a draft, with the REST API: \`gh api repos/${s.slug}/pulls -f head=${s.branch} -f base=${s.base} -f title=... -F body=@.audit/pr-body.md\`, with the body written to that file first. Read it back with \`gh api repos/${s.slug}/pulls/<number>\`. \`gh pr create\` and \`gh pr view\` use GraphQL, which is blocked here.${s.prTemplate ? ` Write the PR body with the headings of the repo's template, ${s.prTemplate}, in its order, in place of the Opening a PR default headings. Keep every heading.` : ""}`
+    ? `Do not open the PR yourself. Push ${s.branch}, write the PR title to .audit/pr-title.txt and its body to .audit/pr-body.md, and the routine opens the PR against ${s.base}. It opens it only after /deslop and /no-comments have run after your last delegate's work, and after /technical-writing and /unslop have run.${s.prTemplate ? ` Write the PR body with the headings of the repo's template, ${s.prTemplate}, in its order, in place of the Opening a PR default headings. Keep every heading.` : ""}`
     : "This is read-only. Make no edits, no commits and no PR.";
   return `/pstack:poteto-mode ${s.name}
 
@@ -393,10 +417,34 @@ export function stopDecision(gaps, count) {
 }
 
 const GIT_COMMIT = /\bgit\s+commit\b/;
-const PR_CREATE = /\bgh\s+api\b.*\/pulls\b.*\s-[fF]\s+(head|base)=/;
+const PR_WRITE = /\bgh\s+api\b(?=.*\/pulls\b)(?=.*\s(-X\s*(POST|PATCH|PUT)|--method\s+(POST|PATCH|PUT)|-f\s|-F\s|--field\b|--raw-field\b|--input\b))|\bgh\s+pr\s+(create|edit)\b/;
+const DELEGATE = "pstack:poteto-agent";
+
+export function prReadiness(transcript) {
+  const lastDelegate = transcript.calls.findLastIndex((c) => c.name === "Agent" && c.input.subagent_type === DELEGATE);
+  const ranAfter = (skill) => transcript.calls.some((c, i) => i > lastDelegate && c.name === "Skill" && new RegExp(`(^|:)${skill}$`).test(String(c.input.skill).replace(/^\//, "")));
+  return [
+    ...["deslop", "no-comments"].filter((s) => !ranAfter(s)).map((s) => `${s} has not run after the last delegate's work`),
+    ...["technical-writing", "unslop"].filter((s) => !usedSkill(transcript.skills, s)).map((s) => `${s} has not run`),
+  ];
+}
 const LEAD_EDITABLE = /^\.audit\/|(^|\/)CHANGELOG\.md$/;
 
-export function preToolDecision(call, transcript, playbook, cwd) {
+const MERGE_CALL = /\bgh\s+api\b.*\/pulls\/\d+\/merge\b|\bgh\s+pr\s+merge\b/;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export function mergeRefusal(command, base) {
+  const pushToTrunk = new RegExp(`\\bgit\\s+push\\b[^;&|]*\\s(\\S*:)?(refs/heads/)?(${escapeRe(base)}|main|master)(\\s|$)`);
+  return MERGE_CALL.test(command) || pushToTrunk.test(command)
+    ? "Never merge or push to the base branch. The routine merges this PR after its own checks pass."
+    : null;
+}
+
+export function preToolDecision(call, transcript, playbook, cwd, base) {
+  if (call.tool_name === "Bash") {
+    const refusal = mergeRefusal(String(call.tool_input.command), base);
+    if (refusal) return refusal;
+  }
   const rules = PLAYBOOKS[playbook];
   if (!rules.opensPr) return null;
   const lead = !call.agent_id;
@@ -418,10 +466,7 @@ export function preToolDecision(call, transcript, playbook, cwd) {
     }
     if (needed.length) return `Run these skills before you commit: ${needed.join(", ")}.`;
   }
-  if (PR_CREATE.test(command)) {
-    const needed = missing(["no-comments", "technical-writing", "unslop"]);
-    if (needed.length) return `Run these skills before you open the PR: ${needed.join(", ")}.`;
-  }
+  if (PR_WRITE.test(command)) return "The routine opens and updates the PR. Write .audit/pr-title.txt and .audit/pr-body.md instead.";
   return null;
 }
 
@@ -429,15 +474,17 @@ function preToolHook(cwd, input) {
   const state = loadState(cwd);
   const path = transcriptPath(state.sessionId);
   const transcript = readTranscript(path ? readFileSync(path, "utf8") : "");
-  return preToolDecision(input, transcript, state.playbook, cwd);
+  return preToolDecision(input, transcript, state.playbook, cwd, state.base);
 }
 
 function stopHook(cwd) {
   const countPath = join(cwd, STOP_COUNT);
   const count = existsSync(countPath) ? Number(readFileSync(countPath, "utf8")) : 0;
   writeFileSync(countPath, String(count + 1));
-  const { violations, findings } = gate(cwd);
-  return stopDecision([...violations, ...findings], count);
+  const state = loadState(cwd);
+  const { violations, findings, transcript } = gate(cwd);
+  const readiness = PLAYBOOKS[state.playbook].opensPr && transcript ? prReadiness(readTranscript(readFileSync(transcript, "utf8"))) : [];
+  return stopDecision([...violations.filter((v) => !v.startsWith("no PR for")), ...findings, ...readiness], count);
 }
 
 export const MERGE_CHECKS = [
@@ -522,9 +569,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     if (decision) console.log(JSON.stringify(decision));
     process.exit(0);
   }
-  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd), "await-ci": () => awaitCi(cwd), "attach-screenshots": () => attachScreenshots(cwd) };
+  const commands = { prepare: () => prepare(arg, cwd), run: () => run(cwd), repair: () => repair(arg, cwd), gate: () => gate(cwd), "merge-check": () => mergeCheck(cwd), "await-ci": () => awaitCi(cwd), "attach-screenshots": () => attachScreenshots(cwd), "open-pr": () => openPr(cwd) };
   if (!commands[command]) {
-    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | attach-screenshots | await-ci | merge-check");
+    console.error("usage: routine.mjs prepare <ticket.json> | run | repair <audit.md> | gate | open-pr | attach-screenshots | await-ci | merge-check");
     process.exit(2);
   }
   const out = commands[command]();
