@@ -54,8 +54,6 @@ export function transcriptPath(sessionId) {
   return readdirSync(root).map((d) => join(root, d, `${sessionId}.jsonl`)).find(existsSync) ?? null;
 }
 
-export const REFUSED = "the routine refused";
-
 export function summarizeDenials(outputs) {
   const counts = new Map();
   for (const out of outputs) {
@@ -70,6 +68,6 @@ export function summarizeDenials(outputs) {
   }
   return [...counts].map(([what, n]) => {
     const shown = what.length > 120 ? `${what.slice(0, 117)}...` : what;
-    return `${REFUSED} \`${shown}\` ${n} time${n === 1 ? "" : "s"}`;
+    return `the routine refused \`${shown}\` ${n} time${n === 1 ? "" : "s"}`;
   });
 }

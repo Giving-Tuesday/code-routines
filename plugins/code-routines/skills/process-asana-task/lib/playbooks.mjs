@@ -62,7 +62,7 @@ const OPENING_A_PR = [
   "Opening a PR: run /deslop over the diff before commit",
   "Opening a PR: run /no-comments before review",
   "Opening a PR: run /technical-writing, then /unslop, on commit bodies and the PR title and body",
-  "Opening a PR: read the PR back with gh api repos/<owner>/<repo>/pulls/<number>",
+  "Opening a PR: write the PR title to .audit/pr-title.txt and the body to .audit/pr-body.md",
 ];
 
 export function seedTodo(playbook, steps) {

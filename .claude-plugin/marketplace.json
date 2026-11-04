@@ -10,7 +10,7 @@
       "name": "code-routines",
       "source": "./plugins/code-routines",
       "description": "Routines for Claude Code.",
-      "version": "1.19.0"
+      "version": "1.21.0"
     },
     {
       "name": "gt-charts",
